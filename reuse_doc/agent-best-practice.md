@@ -247,7 +247,7 @@ async handle(task, thread, agent) {
     
     // 初始化并调用子线程Agent
     const mySubThreadAgent = await MySubThreadAgent.create(/* metadata, settings */);
-    return await mySubThreadAgent.executeTask(/* task */, thread); // 注意：始终传递的都是完整的主thread
+    return await mySubThreadAgent.executeTask(/* task */, thread); // 注意：始终传递的都是完整的主thread，因为Agent永远都是处理主thread或最后一个message的子thread，所以它可以根据自己的定位找到对应的thread，或者在task的meta里放上自己要主要处理的子thread的属性path，一样可以传递。
 }
 ```
 
@@ -419,12 +419,12 @@ class InteractionUnit {
 ### 4.1 SubThreadAgent基类实现
 
 ```javascript
-/
+/*
  * 子线程Agent基类 - 封装子线程处理的通用逻辑
  * 所有具体业务的子线程Agent应继承此类
  */
 class SubThreadAgent extends BaseAgent {
-    /
+    /*
      * 构造函数
      * @param {Object} metadata - Agent元数据
      * @param {Object} settings - Agent设置
@@ -435,7 +435,7 @@ class SubThreadAgent extends BaseAgent {
         this.systemPrompt = null;
     }
     
-    /
+    /*
      * 初始化Agent
      */
     async initialize() {
@@ -449,7 +449,7 @@ class SubThreadAgent extends BaseAgent {
         this.systemPrompt = await this._loadSystemPrompt();
     }
     
-    /
+    /*
      * 初始化交互单元
      */
     async _initializeInteractionUnits() {
@@ -457,7 +457,7 @@ class SubThreadAgent extends BaseAgent {
         this.interactionUnits = {};
     }
     
-    /
+    /*
      * 加载系统提示词
      * @returns {Promise<string>} 系统提示词
      */
@@ -466,7 +466,7 @@ class SubThreadAgent extends BaseAgent {
         return "Default system prompt";
     }
     
-    /
+    /*
      * 执行任务 - 主要入口点
      * @param {Object} task - 当前任务
      * @param {Object} thread - 主线程对象
@@ -482,7 +482,7 @@ class SubThreadAgent extends BaseAgent {
         return super.executeTask(task, thread);
     }
     
-    /
+    /*
      * 执行子线程交互流程
      * @param {Object} task - 当前任务
      * @param {Object} thread - 主线程对象
@@ -513,7 +513,7 @@ class SubThreadAgent extends BaseAgent {
         return new Response(finalResult);
     }
     
-    /
+    /*
      * 执行一系列交互单元
      * @param {Object} task - 当前任务
      * @param {Object} subThread - 子线程对象
@@ -560,7 +560,7 @@ class SubThreadAgent extends BaseAgent {
         return results;
     }
     
-    /
+    /*
      * 判断是否为终止状态
      * @param {string} phase - 当前状态
      * @returns {boolean} 是否为终止状态
@@ -570,7 +570,7 @@ class SubThreadAgent extends BaseAgent {
         return phase === "completed";
     }
     
-    /
+    /*
      * 汇总交互结果
      * @param {Array} results - 交互结果数组
      * @param {Object} subThread - 子线程对象
@@ -939,7 +939,7 @@ class ResultFormattingUnit extends InteractionUnit {
 - 所有的 StateHandler 子类都要继承 StateHandler，而不是自己搞一个父类
 - 主线程Agent继承BaseAgent，子线程Agent继承SubThreadAgent
 - _applyPhaseUpdateSuggestion 和 初始化 briefStatus 都用同样的代码，这代码要在BaseAgent里
-- 所有InteractionUnit都应继承基本的InteractionUnit类
+- 所有InteractionUnit都应继承基本的 InteractionUnit 类
 - 共用逻辑应提取到基类或工具函数中
 
 ## 9. 关键规范总结

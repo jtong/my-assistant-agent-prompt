@@ -1,12 +1,10 @@
 
-`````
 {{#partial }}
 ```yaml
-path: .ai_helper/dev/dev_doc/value_and_prefer.md
+path: .ai_helper/dev/context/working_prompt/reuse_doc/value_and_prefer.md
 render: false
 ```
 {{/partial }}
-`````
 
 
 ## 规范
@@ -15,7 +13,7 @@ render: false
 `````
 {{#partial }}
 ```yaml
-path: .ai_helper/dev/dev_doc/agent-best-practice.md
+path: .ai_helper/dev/context/working_prompt/reuse_doc/agent-best-practice.md
 render: false
 ```
 {{/partial }}
