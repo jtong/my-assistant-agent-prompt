@@ -25,7 +25,7 @@ async initialize() { // Base Agent已经实现，如果没有特殊的，就可�
     await this._initializeStateHandlers();
 }
 
-/
+/*
  * 初始化状态处理器
  * 子类应覆盖此方法以初始化其特定的状态处理器
  */
@@ -157,7 +157,7 @@ _applyPhaseUpdateSuggestion(task, thread) {
 
 #### 3.2.1 整体架构
 
-子线程交互模型采用三层架构设计：
+子线程交互模型采用层次结构设计：
 
 ```
 主线程 (MainThread)
@@ -165,13 +165,15 @@ _applyPhaseUpdateSuggestion(task, thread) {
        └── 子线程 (SubThread)
             └── 子线程Agent (继承SubThreadAgent)
                  └── InteractionUnit (多个)
+                      └── StateHandler (每个InteractionUnit持有对应的StateHandler)
 ```
 
 #### 3.2.2 组件关系
 
 1. 主线程StateHandler: 负责创建子线程并启动子线程交互
 2. 子线程Agent: 管理子线程的完整生命周期，协调多个InteractionUnit
-3. InteractionUnit: 处理单轮完整的bot-user交互对
+3. InteractionUnit: 处理单轮完整的bot-user交互对，持有并委托StateHandler生成bot消息
+4. StateHandler: 负责生成bot消息，由InteractionUnit持有并调用
 
 #### 3.2.3 数据结构
 
@@ -217,15 +219,23 @@ _applyPhaseUpdateSuggestion(task, thread) {
 
 职责:
 - 处理一轮完整的bot-user交互
-- 生成bot指令消息，包括需要执行的操作或生成的内容
-- 处理指令并生成user反馈消息（仅包括执行结果的反馈）
+- 持有并委托StateHandler生成bot消息
+- 处理bot消息中的指令并生成user反馈消息
 - 建议状态更新
 
 关键方法:
 - `execute(task, thread, agent)`: 执行完整的交互单元
-- `generateBotMessage(task, thread, agent)`: 生成bot消息
+- `_executeBotMessageGeneration(task, thread, agent)`: 委托StateHandler生成bot消息
 - `generateUserMessage(botMessage, task, thread, agent)`: 处理bot指令并生成user反馈
 - `_suggestPhaseUpdate(task, thread)`: 建议下一个状态阶段
+
+#### 3.3.3 StateHandler与InteractionUnit的关系
+
+- StateHandler专注于生成bot消息内容
+- InteractionUnit持有StateHandler实例
+- InteractionUnit委托StateHandler生成bot消息
+- InteractionUnit处理bot消息指令并生成用户反馈
+- 两者共享同一状态阶段(phase)信息
 
 ### 3.4 子线程创建与存储
 
@@ -304,22 +314,27 @@ class MySubThreadAgent extends SubThreadAgent {
 ### 3.7 交互单元模式
 
 ```javascript
-/
+/*
  * 交互单元 - 负责一轮完整的bot-user交互
  */
 class InteractionUnit {
-    /
+    /*
      * 构造交互单元
      * @param {Object} config - 配置选项
      * @param {string} config.phase - 对应的状态阶段
      * @param {string} config.nextPhase - 完成后的下一个状态阶段
+     * @param {StateHandler} config.stateHandler - 关联的状态处理器
      */
     constructor(config = {}) {
         this.phase = config.phase;
         this.nextPhase = config.nextPhase;
+        
+        // 持有对应的StateHandler
+        this.stateHandler = config.stateHandler || 
+            new DefaultStateHandler({ phase: this.phase, nextPhase: this.nextPhase });
     }
     
-    /
+    /*
      * 执行完整的交互单元
      * @param {Object} task - 当前任务对象
      * @param {Object} thread - 线程对象
@@ -327,8 +342,8 @@ class InteractionUnit {
      * @returns {Promise<Object>} - 包含bot和user消息的结果对象
      */
     async execute(task, thread, agent) {
-        // 1. 生成bot消息
-        const botMessageText = await this.generateBotMessage(task, thread, agent);
+        // 1. 委托StateHandler生成bot消息
+        const botMessageText = await this._executeBotMessageGeneration(task, thread, agent);
         
         // 2. 创建bot消息对象
         const botMessage = {
@@ -359,18 +374,24 @@ class InteractionUnit {
         };
     }
     
-    /
-     * 生成bot消息
+    /*
+     * 委托StateHandler生成bot消息
      * @param {Object} task - 当前任务对象
      * @param {Object} thread - 线程对象
      * @param {Object} agent - Agent实例
      * @returns {Promise<string>} - bot消息内容
      */
-    async generateBotMessage(task, thread, agent) {
-        throw new Error("必须由子类实现");
+    async _executeBotMessageGeneration(task, thread, agent) {
+        if (!this.stateHandler) {
+            throw new Error("缺少StateHandler，无法生成bot消息");
+        }
+        
+        // 调用StateHandler的handle方法生成消息
+        const response = await this.stateHandler.handle(task, thread, agent);
+        return response.getFullMessage();
     }
     
-    /
+    /*
      * 处理bot指令并生成user反馈
      * @param {Object} botMessage - bot消息对象
      * @param {Object} task - 当前任务对象
@@ -382,7 +403,7 @@ class InteractionUnit {
         throw new Error("必须由子类实现");
     }
     
-    /
+    /*
      * 建议下一个阶段
      * @param {Object} task - 当前任务对象
      * @param {Object} thread - 线程对象
@@ -406,13 +427,67 @@ class InteractionUnit {
 }
 ```
 
-### 3.8 子线程模型最佳实践要点
+### 3.8 子线程初始化模式
 
-1. 子线程创建: 在主线程StateHandler中创建并存储在消息元数据中
-2. Agent初始化: 使用标准的`static async create()`方法创建子线程Agent
-3. 状态管理: 子线程Agent内维护自己的状态处理器映射
-4. 执行流程: 子线程通过多轮内部消息交互完成复杂任务
-5. 结果合成: 子线程执行完毕后，将最终结果作为Response返回
+子线程Agent初始化过程需要为每个InteractionUnit提供对应的StateHandler：
+
+```javascript
+class MySubThreadAgent extends SubThreadAgent {
+    /*
+     * 初始化交互单元
+     * 为每个InteractionUnit提供对应的StateHandler
+     */
+    async _initializeInteractionUnits() {
+        // 首先初始化所有需要的状态处理器
+        const dataPreparationHandler = new DataPreparationStateHandler({
+            phase: "initial_phase",
+            nextPhase: "data_transformation"
+        });
+        
+        const dataTransformationHandler = new DataTransformationStateHandler({
+            phase: "data_transformation",
+            nextPhase: "data_analysis"
+        });
+        
+        const dataAnalysisHandler = new DataAnalysisStateHandler({
+            phase: "data_analysis",
+            nextPhase: "result_formatting"
+        });
+        
+        const resultFormattingHandler = new ResultFormattingStateHandler({
+            phase: "result_formatting",
+            nextPhase: "completed"
+        });
+        
+        // 然后初始化交互单元，并为每个单元提供对应的状态处理器
+        this.interactionUnits = {
+            initial_phase: new DataPreparationUnit({
+                phase: "initial_phase",
+                nextPhase: "data_transformation",
+                stateHandler: dataPreparationHandler
+            }),
+            
+            data_transformation: new DataTransformationUnit({
+                phase: "data_transformation",
+                nextPhase: "data_analysis",
+                stateHandler: dataTransformationHandler
+            }),
+            
+            data_analysis: new DataAnalysisUnit({
+                phase: "data_analysis",
+                nextPhase: "result_formatting",
+                stateHandler: dataAnalysisHandler
+            }),
+            
+            result_formatting: new ResultFormattingUnit({
+                phase: "result_formatting",
+                nextPhase: "completed",
+                stateHandler: resultFormattingHandler
+            })
+        };
+    }
+}
+```
 
 ## 4. 实现指南
 
@@ -451,6 +526,7 @@ class SubThreadAgent extends BaseAgent {
     
     /*
      * 初始化交互单元
+     * 子类应覆盖此方法，并确保为每个InteractionUnit提供对应的StateHandler
      */
     async _initializeInteractionUnits() {
         // 子类应覆盖此方法
@@ -590,7 +666,7 @@ class SubThreadAgent extends BaseAgent {
 ### 4.2 在主线程中启动子线程交互
 
 ```javascript
-/
+/*
  * 在主线程的StateHandler中启动子线程交互
  */
 class MainThreadStateHandler extends StateHandler {
@@ -638,33 +714,64 @@ class MainThreadStateHandler extends StateHandler {
 }
 ```
 
+注意：上级Agent的StateHandler只能初始化下级Agent，下级的不能初始化上级的，避免循环依赖。
+
 ## 5. 业务示例：数据处理流水线
 
 ### 5.1 定义数据处理Agent
 
 ```javascript
-/
+/*
  * 数据处理流水线Agent - 专门处理数据转换和分析流程
  * 继承自SubThreadAgent而非BaseAgent
  */
 class DataPipelineAgent extends SubThreadAgent {
     async _initializeInteractionUnits() {
+        // 首先创建所有状态处理器
+        const dataPreparationHandler = new DataPreparationStateHandler({
+            phase: "initial_phase",
+            nextPhase: "data_transformation"
+        });
+        
+        const dataTransformationHandler = new DataTransformationStateHandler({
+            phase: "data_transformation",
+            nextPhase: "data_analysis"
+        });
+        
+        const dataAnalysisHandler = new DataAnalysisStateHandler({
+            phase: "data_analysis",
+            nextPhase: "result_formatting"
+        });
+        
+        const resultFormattingHandler = new ResultFormattingStateHandler({
+            phase: "result_formatting",
+            nextPhase: "completed"
+        });
+        
+        // 然后创建交互单元，将对应的状态处理器传递给每个交互单元
         this.interactionUnits = {
             initial_phase: new DataPreparationUnit({
                 phase: "initial_phase",
-                nextPhase: "data_transformation"
+                nextPhase: "data_transformation",
+                stateHandler: dataPreparationHandler
             }),
+            
             data_transformation: new DataTransformationUnit({
                 phase: "data_transformation",
-                nextPhase: "data_analysis"
+                nextPhase: "data_analysis",
+                stateHandler: dataTransformationHandler
             }),
+            
             data_analysis: new DataAnalysisUnit({
                 phase: "data_analysis",
-                nextPhase: "result_formatting"
+                nextPhase: "result_formatting",
+                stateHandler: dataAnalysisHandler
             }),
+            
             result_formatting: new ResultFormattingUnit({
                 phase: "result_formatting",
-                nextPhase: "completed"
+                nextPhase: "completed",
+                stateHandler: resultFormattingHandler
             })
         };
     }
@@ -697,14 +804,14 @@ class DataPipelineAgent extends SubThreadAgent {
 }
 ```
 
-### 5.2 定义交互单元
+### 5.2 定义状态处理器
 
 ```javascript
-/
- * 数据准备交互单元
+/*
+ * 数据准备状态处理器 - 负责生成bot消息
  */
-class DataPreparationUnit extends InteractionUnit {
-    async generateBotMessage(task, thread, agent) {
+class DataPreparationStateHandler extends StateHandler {
+    async handle(task, thread, agent) {
         const dataSource = thread.meta?.dataSource || "未指定数据源";
         
         // 生成数据准备代码和指令
@@ -713,20 +820,20 @@ class DataPreparationUnit extends InteractionUnit {
   return data.filter(row => row.value !== null);
 }`;
         
-        return `我已生成数据准备代码：\n\`\`\`javascript\n${prepCode}\n\`\`\`\n请将此代码保存到/tmp/data_prep.js并执行，处理数据源：${dataSource}`;
-    }
-    
-    async generateUserMessage(botMessage, task, thread, agent) {
-        // 注意：user消息只是执行反馈，不生成内容
-        return `执行结果：代码已保存到/tmp/data_prep.js并执行完成。\n数据已加载并过滤，共处理1024条记录，有效记录985条。预处理数据已保存到/tmp/prepared_data.json`;
+        const responseText = `我已生成数据准备代码：\n\`\`\`javascript\n${prepCode}\n\`\`\`\n请将此代码保存到/tmp/data_prep.js并执行，处理数据源：${dataSource}`;
+        
+        // 建议状态更新
+        this._suggestPhaseUpdate(task, thread);
+        
+        return new Response(responseText);
     }
 }
 
-/
- * 数据转换交互单元
+/*
+ * 数据转换状态处理器
  */
-class DataTransformationUnit extends InteractionUnit {
-    async generateBotMessage(task, thread, agent) {
+class DataTransformationStateHandler extends StateHandler {
+    async handle(task, thread, agent) {
         // 获取预处理结果
         const previousMessages = thread.messages || [];
         const prepMessage = previousMessages.find(msg => 
@@ -748,20 +855,20 @@ function categorize(value) {
   return "high";
 }`;
         
-        return `基于预处理结果，我已生成数据转换代码：\n\`\`\`javascript\n${transformCode}\n\`\`\`\n请将此代码保存到/tmp/transform.js并执行，处理/tmp/prepared_data.json文件`;
-    }
-    
-    async generateUserMessage(botMessage, task, thread, agent) {
-        // 执行反馈
-        return `转换完成：代码已保存到/tmp/transform.js并执行。\n数据已转换，分类结果：低值(167条)，中值(423条)，高值(395条)。转换后数据已保存到/tmp/transformed_data.json`;
+        const responseText = `基于预处理结果，我已生成数据转换代码：\n\`\`\`javascript\n${transformCode}\n\`\`\`\n请将此代码保存到/tmp/transform.js并执行，处理/tmp/prepared_data.json文件`;
+        
+        // 建议状态更新
+        this._suggestPhaseUpdate(task, thread);
+        
+        return new Response(responseText);
     }
 }
 
-/
- * 数据分析交互单元
+/*
+ * 数据分析状态处理器
  */
-class DataAnalysisUnit extends InteractionUnit {
-    async generateBotMessage(task, thread, agent) {
+class DataAnalysisStateHandler extends StateHandler {
+    async handle(task, thread, agent) {
         // 生成分析代码
         const analysisCode = `function analyzeData(data) {
   const stats = {
@@ -785,20 +892,20 @@ class DataAnalysisUnit extends InteractionUnit {
   return stats;
 }`;
         
-        return `现在需要对转换后的数据进行分析，我已生成分析代码：\n\`\`\`javascript\n${analysisCode}\n\`\`\`\n请将此代码保存到/tmp/analysis.js并执行，处理/tmp/transformed_data.json文件`;
-    }
-    
-    async generateUserMessage(botMessage, task, thread, agent) {
-        // 执行反馈，包含分析结果
-        return `分析完成：代码已保存到/tmp/analysis.js并执行。\n分析结果：\n- 总记录数：985\n- 平均值：47.2\n- 类别分布：低(16.9%)，中(42.9%)，高(40.2%)\n分析报告已保存到/tmp/analysis_results.json`;
+        const responseText = `现在需要对转换后的数据进行分析，我已生成分析代码：\n\`\`\`javascript\n${analysisCode}\n\`\`\`\n请将此代码保存到/tmp/analysis.js并执行，处理/tmp/transformed_data.json文件`;
+        
+        // 建议状态更新
+        this._suggestPhaseUpdate(task, thread);
+        
+        return new Response(responseText);
     }
 }
 
-/
- * 结果格式化交互单元
+/*
+ * 结果格式化状态处理器
  */
-class ResultFormattingUnit extends InteractionUnit {
-    async generateBotMessage(task, thread, agent) {
+class ResultFormattingStateHandler extends StateHandler {
+    async handle(task, thread, agent) {
         // 生成格式化代码
         const formattingCode = `function formatResults(analysisResults) {
   const report = {
@@ -817,9 +924,57 @@ class ResultFormattingUnit extends InteractionUnit {
   return JSON.stringify(report, null, 2);
 }`;
         
-        return `最后需要将分析结果格式化为报告，我已生成格式化代码：\n\`\`\`javascript\n${formattingCode}\n\`\`\`\n请将此代码保存到/tmp/formatter.js并执行，处理/tmp/analysis_results.json文件，生成最终HTML报告`;
+        const responseText = `最后需要将分析结果格式化为报告，我已生成格式化代码：\n\`\`\`javascript\n${formattingCode}\n\`\`\`\n请将此代码保存到/tmp/formatter.js并执行，处理/tmp/analysis_results.json文件，生成最终HTML报告`;
+        
+        // 建议状态更新
+        this._suggestPhaseUpdate(task, thread);
+        
+        return new Response(responseText);
     }
-    
+}
+```
+
+### 5.3 定义交互单元
+
+```javascript
+/*
+ * 数据准备交互单元 - 持有对应的StateHandler
+ */
+class DataPreparationUnit extends InteractionUnit {
+    /*
+     * 生成用户反馈消息
+     * 注意：bot消息已由持有的StateHandler生成，这里只处理用户反馈
+     */
+    async generateUserMessage(botMessage, task, thread, agent) {
+        // 执行bot消息中的指令，并返回结果
+        return `执行结果：代码已保存到/tmp/data_prep.js并执行完成。\n数据已加载并过滤，共处理1024条记录，有效记录985条。预处理数据已保存到/tmp/prepared_data.json`;
+    }
+}
+
+/*
+ * 数据转换交互单元
+ */
+class DataTransformationUnit extends InteractionUnit {
+    async generateUserMessage(botMessage, task, thread, agent) {
+        // 执行反馈
+        return `转换完成：代码已保存到/tmp/transform.js并执行。\n数据已转换，分类结果：低值(167条)，中值(423条)，高值(395条)。转换后数据已保存到/tmp/transformed_data.json`;
+    }
+}
+
+/*
+ * 数据分析交互单元
+ */
+class DataAnalysisUnit extends InteractionUnit {
+    async generateUserMessage(botMessage, task, thread, agent) {
+        // 执行反馈，包含分析结果
+        return `分析完成：代码已保存到/tmp/analysis.js并执行。\n分析结果：\n- 总记录数：985\n- 平均值：47.2\n- 类别分布：低(16.9%)，中(42.9%)，高(40.2%)\n分析报告已保存到/tmp/analysis_results.json`;
+    }
+}
+
+/*
+ * 结果格式化交互单元
+ */
+class ResultFormattingUnit extends InteractionUnit {
     async generateUserMessage(botMessage, task, thread, agent) {
         // 执行反馈，包含最终结果
         return `处理完成：\n数据流水线已全部执行，最终报告已生成并保存到/tmp/final_report.html\n\n主要发现：\n1. 高值类别占比40.2%，显著高于预期\n2. 数据转换后分布更均匀，适合后续建模\n3. 建议重点关注中值类别，增长潜力最大`;
@@ -853,6 +1008,7 @@ class ResultFormattingUnit extends InteractionUnit {
 
 - 每个线程有独立的 `settings.briefStatus.phase` 标记当前状态
 - 状态变更通过 `settings.briefStatus._suggestPhaseUpdate` 机制实现
+- 状态处理器与交互单元共享相同的状态信息
 
 ### 6.4 数据流动
 
@@ -868,7 +1024,8 @@ class ResultFormattingUnit extends InteractionUnit {
 1. 职责分离:
    - 主线程Agent继承BaseAgent，负责主要交互
    - 子线程Agent继承SubThreadAgent，负责子线程交互流程管理
-   - InteractionUnit专注于处理单轮完整的bot-user交互
+   - StateHandler专注于生成bot消息
+   - InteractionUnit持有StateHandler并专注于处理bot消息指令和生成user反馈
    - 每个组件只关注自己的责任范围
 
 2. 状态驱动:
@@ -882,8 +1039,8 @@ class ResultFormattingUnit extends InteractionUnit {
    - 内部交互过程完全封装
 
 4. 交互职责划分:
-   - Bot消息包含指令和生成的内容，以及执行建议
-   - User消息只包含执行结果的反馈，不生成内容
+   - Bot消息(由StateHandler生成)包含指令和生成的内容，以及执行建议
+   - User消息(由InteractionUnit生成)只包含执行结果的反馈，不生成内容
    - 子线程执行程序逻辑，而不是生成新内容
 
 ### 7.2 常见问题与解决方案
@@ -930,8 +1087,8 @@ class ResultFormattingUnit extends InteractionUnit {
 
 ### 8.2 文件组织
 
-- 每种类型的子线程Agent应有独立的文件
-- 相关的InteractionUnit应组织在同一个文件或目录中
+- 每种类型的子线程Agent应有独立的文件，每个子线程Agent有对应的StateHandler和InteractionUnit文件
+- 相关的StateHandler和InteractionUnit应组织在同一个目录中
 - 共用的基类和工具函数放在单独的文件中
 
 ### 8.3 复用要求
@@ -958,12 +1115,14 @@ class ResultFormattingUnit extends InteractionUnit {
 3. 子线程交互模型：
    - 主线程Agent继承BaseAgent
    - 子线程Agent继承SubThreadAgent
-   - 使用InteractionUnit处理单轮交互，Bot生成内容和指令，User提供执行反馈
+   - InteractionUnit持有对应的StateHandler
+   - StateHandler负责生成bot消息内容
+   - InteractionUnit处理bot指令并生成user反馈
    - 多轮交互完成后汇总结果返回给主线程
 
 4. 代码组织原则：
-   - 使用 `StateHandler` 子类处理特定状态的消息
-   - 使用 `InteractionUnit` 处理子线程中的交互
+   - 使用 `StateHandler` 子类处理特定状态的bot消息生成
+   - 使用 `InteractionUnit` 子类处理子线程中的完整bot-user消息对
    - 状态处理器和交互单元应专注于单一职责
    - Agent通过委托模式将消息处理转发给状态处理器或交互单元
 

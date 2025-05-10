@@ -5,7 +5,7 @@
 `````js
 {{#partial }}
 ```yaml
-path: .ai_helper/dev/dev_doc/agent-best-practice.md
+path: .ai_helper/dev/context/working_prompt/reuse_doc/agent-best-practice.md
 render: false
 ```
 {{/partial }}
