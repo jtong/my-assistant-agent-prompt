@@ -20,6 +20,7 @@
 - 如果存在的可以工作的代码被无故重写，是对你的否定。
 - 如果你生成的不是一个文件的完整内容，是对你的否定
 - 如果你生成的文件之间有循环依赖，是对你的否定。
+- 如果因为一次回复生成不完，你还是勉强想在一个回复里生成完，是对你的否定。
 
 ## Agent 开发偏好
 
@@ -38,5 +39,6 @@
 - 如果你使用了generateBotMessage来生成消息，是对你的否定。
 - 如果子Thread的Agent没有继承SubThreadAgent，是对你的否定。
 - 如果每个子Thread没有创建对应的Agent，是对你的否定。
-- 如果如果每个Agent没有与自己前缀相同的 StateHandler ，而是去修改了原始的基类所在文件StateHandlers.js，是对你的否定。
+- 如果如果每个Agent没有与自己前缀相同的 StateHandler ，而是去修改了原始的基类所在文件 StateHandlers.js或父级Thread的Agent的 StateHandler 所在文件，是对你的否定。
+- 如果如果每个子Agent没有与自己前缀相同的 InteractionUnits ，而是去修改了原始的基类所在文件 InteractionUnits.js或父级Thread的Agent的 InteractionUnit 所在文件，是对你的否定。
 - 如果基类和子类在一个文件里，是对你的否定。

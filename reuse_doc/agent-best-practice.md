@@ -66,6 +66,26 @@ class StateHandler {
     constructor(config = {}) {
         this.phase = config.phase;
         this.nextPhase = config.nextPhase;
+        // 初始化基本属性，但不执行复杂或异步操作
+    }
+    
+    /*
+     * 异步初始化方法
+     * 子类应该覆盖此方法以执行复杂的异步初始化操作
+     */
+    async initialize() {
+        // 基础实现，子类可覆盖
+    }
+    
+    /*
+     * 静态创建方法
+     * @param {Object} config - 配置对象
+     * @returns {Promise<StateHandler>} 初始化完成的处理器实例
+     */
+    static async create(config = {}) {
+        const handler = new this(config);
+        await handler.initialize();
+        return handler;
     }
     
     async handle(task, thread, agent) {
@@ -87,6 +107,21 @@ class StateHandler {
             }
         };
         task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
+    }
+    
+    /*
+     * 通过agent访问AI客户端进行生成
+     * @param {Object} agent - Agent实例，包含AI客户端
+     * @param {Object} params - 生成参数
+     * @returns {Promise<string>} 生成结果
+     */
+    async generateWithAI(agent, params) {
+        if (!agent.llmClient) {
+            throw new Error("Agent没有可用的LLM客户端");
+        }
+        
+        // 使用agent的llmClient进行生成
+        return await agent.llmClient.generate(params);
     }
 }
 ```
@@ -224,6 +259,7 @@ _applyPhaseUpdateSuggestion(task, thread) {
 - 建议状态更新
 
 关键方法:
+- `initialize()`: 异步初始化交互单元
 - `execute(task, thread, agent)`: 执行完整的交互单元
 - `_executeBotMessageGeneration(task, thread, agent)`: 委托StateHandler生成bot消息
 - `generateUserMessage(botMessage, task, thread, agent)`: 处理bot指令并生成user反馈
@@ -323,15 +359,39 @@ class InteractionUnit {
      * @param {Object} config - 配置选项
      * @param {string} config.phase - 对应的状态阶段
      * @param {string} config.nextPhase - 完成后的下一个状态阶段
-     * @param {StateHandler} config.stateHandler - 关联的状态处理器
+     * @param {StateHandler} config.stateHandler - 关联的状态处理器实例
      */
     constructor(config = {}) {
         this.phase = config.phase;
         this.nextPhase = config.nextPhase;
         
-        // 持有对应的StateHandler
-        this.stateHandler = config.stateHandler || 
-            new DefaultStateHandler({ phase: this.phase, nextPhase: this.nextPhase });
+        // 存储StateHandler实例
+        this.stateHandler = config.stateHandler;
+    }
+    
+    /*
+     * 异步初始化方法
+     * 子类应该覆盖此方法以执行复杂的异步初始化操作
+     */
+    async initialize() {
+        // 如果没有提供StateHandler，则尝试创建默认的
+        if (!this.stateHandler) {
+            this.stateHandler = await DefaultStateHandler.create({ 
+                phase: this.phase, 
+                nextPhase: this.nextPhase 
+            });
+        }
+    }
+    
+    /*
+     * 静态创建方法
+     * @param {Object} config - 配置对象
+     * @returns {Promise<InteractionUnit>} 初始化完成的交互单元实例
+     */
+    static async create(config = {}) {
+        const unit = new this(config);
+        await unit.initialize();
+        return unit;
     }
     
     /*
@@ -424,6 +484,21 @@ class InteractionUnit {
         // 更新线程设置
         thread.settings = updatedSettings;
     }
+    
+    /
+     * 通过agent访问AI客户端进行生成
+     * @param {Object} agent - Agent实例，包含AI客户端
+     * @param {Object} params - 生成参数
+     * @returns {Promise<string>} 生成结果
+     */
+    async generateWithAI(agent, params) {
+        if (!agent.llmClient) {
+            throw new Error("Agent没有可用的LLM客户端");
+        }
+        
+        // 使用agent的llmClient进行生成
+        return await agent.llmClient.generate(params);
+    }
 }
 ```
 
@@ -433,53 +508,53 @@ class InteractionUnit {
 
 ```javascript
 class MySubThreadAgent extends SubThreadAgent {
-    /*
+    /
      * 初始化交互单元
      * 为每个InteractionUnit提供对应的StateHandler
      */
     async _initializeInteractionUnits() {
         // 首先初始化所有需要的状态处理器
-        const dataPreparationHandler = new DataPreparationStateHandler({
+        const dataPreparationHandler = await DataPreparationStateHandler.create({
             phase: "initial_phase",
             nextPhase: "data_transformation"
         });
         
-        const dataTransformationHandler = new DataTransformationStateHandler({
+        const dataTransformationHandler = await DataTransformationStateHandler.create({
             phase: "data_transformation",
             nextPhase: "data_analysis"
         });
         
-        const dataAnalysisHandler = new DataAnalysisStateHandler({
+        const dataAnalysisHandler = await DataAnalysisStateHandler.create({
             phase: "data_analysis",
             nextPhase: "result_formatting"
         });
         
-        const resultFormattingHandler = new ResultFormattingStateHandler({
+        const resultFormattingHandler = await ResultFormattingStateHandler.create({
             phase: "result_formatting",
             nextPhase: "completed"
         });
         
         // 然后初始化交互单元，并为每个单元提供对应的状态处理器
         this.interactionUnits = {
-            initial_phase: new DataPreparationUnit({
+            initial_phase: await DataPreparationUnit.create({
                 phase: "initial_phase",
                 nextPhase: "data_transformation",
                 stateHandler: dataPreparationHandler
             }),
             
-            data_transformation: new DataTransformationUnit({
+            data_transformation: await DataTransformationUnit.create({
                 phase: "data_transformation",
                 nextPhase: "data_analysis",
                 stateHandler: dataTransformationHandler
             }),
             
-            data_analysis: new DataAnalysisUnit({
+            data_analysis: await DataAnalysisUnit.create({
                 phase: "data_analysis",
                 nextPhase: "result_formatting",
                 stateHandler: dataAnalysisHandler
             }),
             
-            result_formatting: new ResultFormattingUnit({
+            result_formatting: await ResultFormattingUnit.create({
                 phase: "result_formatting",
                 nextPhase: "completed",
                 stateHandler: resultFormattingHandler
@@ -494,12 +569,12 @@ class MySubThreadAgent extends SubThreadAgent {
 ### 4.1 SubThreadAgent基类实现
 
 ```javascript
-/*
+/
  * 子线程Agent基类 - 封装子线程处理的通用逻辑
  * 所有具体业务的子线程Agent应继承此类
  */
 class SubThreadAgent extends BaseAgent {
-    /*
+    /
      * 构造函数
      * @param {Object} metadata - Agent元数据
      * @param {Object} settings - Agent设置
@@ -510,7 +585,7 @@ class SubThreadAgent extends BaseAgent {
         this.systemPrompt = null;
     }
     
-    /*
+    /
      * 初始化Agent
      */
     async initialize() {
@@ -714,8 +789,6 @@ class MainThreadStateHandler extends StateHandler {
 }
 ```
 
-注意：上级Agent的StateHandler只能初始化下级Agent，下级的不能初始化上级的，避免循环依赖。
-
 ## 5. 业务示例：数据处理流水线
 
 ### 5.1 定义数据处理Agent
@@ -728,47 +801,47 @@ class MainThreadStateHandler extends StateHandler {
 class DataPipelineAgent extends SubThreadAgent {
     async _initializeInteractionUnits() {
         // 首先创建所有状态处理器
-        const dataPreparationHandler = new DataPreparationStateHandler({
+        const dataPreparationHandler = await DataPreparationStateHandler.create({
             phase: "initial_phase",
             nextPhase: "data_transformation"
         });
         
-        const dataTransformationHandler = new DataTransformationStateHandler({
+        const dataTransformationHandler = await DataTransformationStateHandler.create({
             phase: "data_transformation",
             nextPhase: "data_analysis"
         });
         
-        const dataAnalysisHandler = new DataAnalysisStateHandler({
+        const dataAnalysisHandler = await DataAnalysisStateHandler.create({
             phase: "data_analysis",
             nextPhase: "result_formatting"
         });
         
-        const resultFormattingHandler = new ResultFormattingStateHandler({
+        const resultFormattingHandler = await ResultFormattingStateHandler.create({
             phase: "result_formatting",
             nextPhase: "completed"
         });
         
         // 然后创建交互单元，将对应的状态处理器传递给每个交互单元
         this.interactionUnits = {
-            initial_phase: new DataPreparationUnit({
+            initial_phase: await DataPreparationUnit.create({
                 phase: "initial_phase",
                 nextPhase: "data_transformation",
                 stateHandler: dataPreparationHandler
             }),
             
-            data_transformation: new DataTransformationUnit({
+            data_transformation: await DataTransformationUnit.create({
                 phase: "data_transformation",
                 nextPhase: "data_analysis",
                 stateHandler: dataTransformationHandler
             }),
             
-            data_analysis: new DataAnalysisUnit({
+            data_analysis: await DataAnalysisUnit.create({
                 phase: "data_analysis",
                 nextPhase: "result_formatting",
                 stateHandler: dataAnalysisHandler
             }),
             
-            result_formatting: new ResultFormattingUnit({
+            result_formatting: await ResultFormattingUnit.create({
                 phase: "result_formatting",
                 nextPhase: "completed",
                 stateHandler: resultFormattingHandler
@@ -814,11 +887,11 @@ class DataPreparationStateHandler extends StateHandler {
     async handle(task, thread, agent) {
         const dataSource = thread.meta?.dataSource || "未指定数据源";
         
-        // 生成数据准备代码和指令
-        const prepCode = `function prepareData(source) {
-  const data = loadData(source);
-  return data.filter(row => row.value !== null);
-}`;
+        // 使用agent的AI客户端生成代码
+        const prepCode = await this.generateWithAI(agent, {
+            prompt: `为${dataSource}生成数据准备代码，过滤掉null值`,
+            temperature: 0.7
+        });
         
         const responseText = `我已生成数据准备代码：\n\`\`\`javascript\n${prepCode}\n\`\`\`\n请将此代码保存到/tmp/data_prep.js并执行，处理数据源：${dataSource}`;
         
@@ -840,20 +913,11 @@ class DataTransformationStateHandler extends StateHandler {
             msg.sender === "user" && msg.text.includes("执行结果：代码已保存")
         );
         
-        // 生成转换代码
-        const transformCode = `function transformData(data) {
-  return data.map(record => ({
-    id: record.id,
-    value: record.value * 2,
-    category: categorize(record.value)
-  }));
-}
-
-function categorize(value) {
-  if (value < 10) return "low";
-  if (value < 50) return "medium";
-  return "high";
-}`;
+        // 使用agent的AI客户端生成转换代码
+        const transformCode = await this.generateWithAI(agent, {
+            prompt: "生成数据转换代码，增加id、value和category字段",
+            temperature: 0.7
+        });
         
         const responseText = `基于预处理结果，我已生成数据转换代码：\n\`\`\`javascript\n${transformCode}\n\`\`\`\n请将此代码保存到/tmp/transform.js并执行，处理/tmp/prepared_data.json文件`;
         
@@ -869,28 +933,11 @@ function categorize(value) {
  */
 class DataAnalysisStateHandler extends StateHandler {
     async handle(task, thread, agent) {
-        // 生成分析代码
-        const analysisCode = `function analyzeData(data) {
-  const stats = {
-    total: data.length,
-    categories: {},
-    average: calculateAverage(data),
-    distribution: calculateDistribution(data)
-  };
-  
-  // 计算每个类别的统计信息
-  const categories = [...new Set(data.map(item => item.category))];
-  categories.forEach(category => {
-    const items = data.filter(item => item.category === category);
-    stats.categories[category] = {
-      count: items.length,
-      percentage: (items.length / data.length * 100).toFixed(2) + '%',
-      avgValue: calculateAverage(items)
-    };
-  });
-  
-  return stats;
-}`;
+        // 使用agent的AI客户端生成分析代码
+        const analysisCode = await this.generateWithAI(agent, {
+            prompt: "生成数据分析代码，计算统计信息和分布",
+            temperature: 0.7
+        });
         
         const responseText = `现在需要对转换后的数据进行分析，我已生成分析代码：\n\`\`\`javascript\n${analysisCode}\n\`\`\`\n请将此代码保存到/tmp/analysis.js并执行，处理/tmp/transformed_data.json文件`;
         
@@ -906,23 +953,11 @@ class DataAnalysisStateHandler extends StateHandler {
  */
 class ResultFormattingStateHandler extends StateHandler {
     async handle(task, thread, agent) {
-        // 生成格式化代码
-        const formattingCode = `function formatResults(analysisResults) {
-  const report = {
-    title: "数据分析报告",
-    timestamp: new Date().toISOString(),
-    summary: \`共分析${analysisResults.total}条记录，平均值为${analysisResults.average}\`,
-    categoryBreakdown: Object.entries(analysisResults.categories).map(([name, stats]) => ({
-      name,
-      count: stats.count,
-      percentage: stats.percentage,
-      averageValue: stats.avgValue
-    })),
-    recommendations: generateRecommendations(analysisResults)
-  };
-  
-  return JSON.stringify(report, null, 2);
-}`;
+        // 使用agent的AI客户端生成格式化代码
+        const formattingCode = await this.generateWithAI(agent, {
+            prompt: "生成结果格式化代码，创建分析报告",
+            temperature: 0.7
+        });
         
         const responseText = `最后需要将分析结果格式化为报告，我已生成格式化代码：\n\`\`\`javascript\n${formattingCode}\n\`\`\`\n请将此代码保存到/tmp/formatter.js并执行，处理/tmp/analysis_results.json文件，生成最终HTML报告`;
         
@@ -947,7 +982,13 @@ class DataPreparationUnit extends InteractionUnit {
      */
     async generateUserMessage(botMessage, task, thread, agent) {
         // 执行bot消息中的指令，并返回结果
-        return `执行结果：代码已保存到/tmp/data_prep.js并执行完成。\n数据已加载并过滤，共处理1024条记录，有效记录985条。预处理数据已保存到/tmp/prepared_data.json`;
+        const feedback = await this.generateWithAI(agent, {
+            prompt: "生成数据准备执行反馈，包含记录数",
+            botMessage: botMessage.text,
+            temperature: 0.3
+        });
+        
+        return feedback || `执行结果：代码已保存到/tmp/data_prep.js并执行完成。\n数据已加载并过滤，共处理1024条记录，有效记录985条。预处理数据已保存到/tmp/prepared_data.json`;
     }
 }
 
@@ -957,7 +998,13 @@ class DataPreparationUnit extends InteractionUnit {
 class DataTransformationUnit extends InteractionUnit {
     async generateUserMessage(botMessage, task, thread, agent) {
         // 执行反馈
-        return `转换完成：代码已保存到/tmp/transform.js并执行。\n数据已转换，分类结果：低值(167条)，中值(423条)，高值(395条)。转换后数据已保存到/tmp/transformed_data.json`;
+        const feedback = await this.generateWithAI(agent, {
+            prompt: "生成数据转换执行反馈，包含分类结果",
+            botMessage: botMessage.text,
+            temperature: 0.3
+        });
+        
+        return feedback || `转换完成：代码已保存到/tmp/transform.js并执行。\n数据已转换，分类结果：低值(167条)，中值(423条)，高值(395条)。转换后数据已保存到/tmp/transformed_data.json`;
     }
 }
 
@@ -967,7 +1014,13 @@ class DataTransformationUnit extends InteractionUnit {
 class DataAnalysisUnit extends InteractionUnit {
     async generateUserMessage(botMessage, task, thread, agent) {
         // 执行反馈，包含分析结果
-        return `分析完成：代码已保存到/tmp/analysis.js并执行。\n分析结果：\n- 总记录数：985\n- 平均值：47.2\n- 类别分布：低(16.9%)，中(42.9%)，高(40.2%)\n分析报告已保存到/tmp/analysis_results.json`;
+        const feedback = await this.generateWithAI(agent, {
+            prompt: "生成数据分析执行反馈，包含分析结果",
+            botMessage: botMessage.text,
+            temperature: 0.3
+        });
+        
+        return feedback || `分析完成：代码已保存到/tmp/analysis.js并执行。\n分析结果：\n- 总记录数：985\n- 平均值：47.2\n- 类别分布：低(16.9%)，中(42.9%)，高(40.2%)\n分析报告已保存到/tmp/analysis_results.json`;
     }
 }
 
@@ -977,7 +1030,13 @@ class DataAnalysisUnit extends InteractionUnit {
 class ResultFormattingUnit extends InteractionUnit {
     async generateUserMessage(botMessage, task, thread, agent) {
         // 执行反馈，包含最终结果
-        return `处理完成：\n数据流水线已全部执行，最终报告已生成并保存到/tmp/final_report.html\n\n主要发现：\n1. 高值类别占比40.2%，显著高于预期\n2. 数据转换后分布更均匀，适合后续建模\n3. 建议重点关注中值类别，增长潜力最大`;
+        const feedback = await this.generateWithAI(agent, {
+            prompt: "生成最终报告执行反馈，包含主要发现",
+            botMessage: botMessage.text,
+            temperature: 0.3
+        });
+        
+        return feedback || `处理完成：\n数据流水线已全部执行，最终报告已生成并保存到/tmp/final_report.html\n\n主要发现：\n1. 高值类别占比40.2%，显著高于预期\n2. 数据转换后分布更均匀，适合后续建模\n3. 建议重点关注中值类别，增长潜力最大`;
     }
 }
 ```
@@ -1007,7 +1066,7 @@ class ResultFormattingUnit extends InteractionUnit {
 ### 6.3 状态管理
 
 - 每个线程有独立的 `settings.briefStatus.phase` 标记当前状态
-- 状态变更通过 `settings.briefStatus._suggestPhaseUpdate` 机制实现
+- 状态变更通过 `settings._phaseUpdateSuggestion` 机制实现
 - 状态处理器与交互单元共享相同的状态信息
 
 ### 6.4 数据流动
@@ -1043,6 +1102,11 @@ class ResultFormattingUnit extends InteractionUnit {
    - User消息(由InteractionUnit生成)只包含执行结果的反馈，不生成内容
    - 子线程执行程序逻辑，而不是生成新内容
 
+5. 依赖管理:
+   - StateHandler 和 InteractionUnit 不应初始化父级Agent，避免循环依赖
+   - 通过方法参数获取所需的Agent实例和功能
+   - 使用提供的Agent实例访问AI能力，而不是自行创建AI客户端
+
 ### 7.2 常见问题与解决方案
 
 1. 状态管理:
@@ -1060,6 +1124,10 @@ class ResultFormattingUnit extends InteractionUnit {
 4. 错误处理:
    - 问题: 子线程中的错误影响主线程
    - 解决方案: 在子线程Agent中实现健壮的错误处理逻辑
+
+5. 循环依赖:
+   - 问题: StateHandler或InteractionUnit初始化父级Agent导致循环依赖
+   - 解决方案: 总是通过方法参数传递Agent实例，而不是在组件中初始化Agent
 
 ### 7.3 扩展子线程模型
 
@@ -1120,7 +1188,12 @@ class ResultFormattingUnit extends InteractionUnit {
    - InteractionUnit处理bot指令并生成user反馈
    - 多轮交互完成后汇总结果返回给主线程
 
-4. 代码组织原则：
+4. 依赖管理原则：
+   - StateHandler和InteractionUnit不初始化父级Agent
+   - 使用方法参数中的agent参数访问AI能力
+   - 组件通过异步initialize()和静态create()方法初始化
+
+5. 代码组织原则：
    - 使用 `StateHandler` 子类处理特定状态的bot消息生成
    - 使用 `InteractionUnit` 子类处理子线程中的完整bot-user消息对
    - 状态处理器和交互单元应专注于单一职责

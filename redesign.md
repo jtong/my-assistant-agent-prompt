@@ -22,7 +22,7 @@ render: false
 `````js
 {{#partial }}
 ```yaml
-path: spike/1.js
+path: data/1.js
 render: false
 ```
 {{/partial }}
@@ -31,4 +31,7 @@ render: false
 ## 任务
 
 我希望 改进这个规范，我们需要把规范中子thread的处理进一步完善。需要完善的点是：
-- 从样例数据中我们可以看出，我们是需要既生成bot也要生成user，而目前的机制， StateHandler 是生成bot message的，InteractionUnit 应该持有 StateHandler ，和 StateHandler 共享一个状态，将生成bot message的职责委派给 StateHandler， 然后在 StateHandler 生成完后，采取相应的操作（根据bot message要求的），然后生成 user message，目前文档中这个持有关系没有体现出来。
+
+- InteractionUnit 和 StateHandler 里不该初始化父级Agent，避免循环依赖。（注意：只是不能初始化父级别thread的Agent，而不是任何Agent，因为可能会初始化子级）
+- InteractionUnit 和 StateHandler 里如果需要访问AI进行生成，可以自己生成，可以通过参数里的agent实例拿到对应的AI实例。
+- InteractionUnit 和 StateHandler的初始化应该仿照Agent，也提供一个async初始化函数和create静态函数
