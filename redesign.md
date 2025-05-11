@@ -1,4 +1,13 @@
 
+{{#partial }}
+```yaml
+path: .ai_helper/dev/context/working_prompt/reuse_doc/value_and_prefer.md
+render: false
+```
+{{/partial }}
+
+
+
 ## 规范
 
 
@@ -30,8 +39,8 @@ render: false
 
 ## 任务
 
-我希望 改进这个规范，我们需要把规范中子thread的处理进一步完善。需要完善的点是：
+我希望 改进这个规范，我们需要把规范中子thread的处理进一步完善。需要完善的点是对message和thread的持久化：
 
-- InteractionUnit 和 StateHandler 里不该初始化父级Agent，避免循环依赖。（注意：只是不能初始化父级别thread的Agent，而不是任何Agent，因为可能会初始化子级）
-- InteractionUnit 和 StateHandler 里如果需要访问AI进行生成，可以自己生成，可以通过参数里的agent实例拿到对应的AI实例。
-- InteractionUnit 和 StateHandler的初始化应该仿照Agent，也提供一个async初始化函数和create静态函数
+- 主Thread的Agent和子thread的Agent的切换。
+  - 主要是出于UI的考虑，主Thread的Agent先用addNextTask来生成一个message显示是合理的操作，这样才会更新一个占位符，并切换回Agent继续用子thread进行实质的message生成。但是后续执行的任务需要是主Agent接住，实际上可能不需要区分任务名，只需要加一个状态phase即可，也就是准备生成是一个状态，实际生成是另一个状态，两个状态就可以完成主Thread的Agent对子Thread的Agent的切换。
+- 子thread agent再创建子thread的agent的时候，因为没有UI的考虑就不需要两个状态了。这里通过host_utils的threadRepository来更新即可。

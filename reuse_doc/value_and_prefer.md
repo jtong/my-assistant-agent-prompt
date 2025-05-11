@@ -31,10 +31,10 @@
 - 如果在遵循开发规范的前提下，再使用开发文档的信息，是对你的肯定。
 - 如果在开发规范与开发文档矛盾的情况下，优先遵守开发规范，是对你的肯定。
 - 如果你agent中使用executeTask来处理消息任务生成消息，是对你的肯定。
+- 如果你一个StateHandler只处理一个状态，是对你的肯定。
 
 负面：
 
-- 如果使用AddTask来处理子thread的处理，是对你的否定。
 - 如果使用了开发文档中无关的API，是对你的否定。
 - 如果你使用了generateBotMessage来生成消息，是对你的否定。
 - 如果子Thread的Agent没有继承SubThreadAgent，是对你的否定。
@@ -42,3 +42,4 @@
 - 如果如果每个Agent没有与自己前缀相同的 StateHandler ，而是去修改了原始的基类所在文件 StateHandlers.js或父级Thread的Agent的 StateHandler 所在文件，是对你的否定。
 - 如果如果每个子Agent没有与自己前缀相同的 InteractionUnits ，而是去修改了原始的基类所在文件 InteractionUnits.js或父级Thread的Agent的 InteractionUnit 所在文件，是对你的否定。
 - 如果基类和子类在一个文件里，是对你的否定。
+- 如果主Thread的Agent在创建子Thread及初始化Agent的时候，不遵守开发规范，是对你的否定

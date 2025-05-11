@@ -60,73 +60,9 @@ async loadOperations(agent) { //主Agent才必须实现，子Agent不需要
 
 ### 2.1 状态处理结构
 
-```javascript
-// 状态处理器基类
-class StateHandler {
-    constructor(config = {}) {
-        this.phase = config.phase;
-        this.nextPhase = config.nextPhase;
-        // 初始化基本属性，但不执行复杂或异步操作
-    }
-    
-    /*
-     * 异步初始化方法
-     * 子类应该覆盖此方法以执行复杂的异步初始化操作
-     */
-    async initialize() {
-        // 基础实现，子类可覆盖
-    }
-    
-    /*
-     * 静态创建方法
-     * @param {Object} config - 配置对象
-     * @returns {Promise<StateHandler>} 初始化完成的处理器实例
-     */
-    static async create(config = {}) {
-        const handler = new this(config);
-        await handler.initialize();
-        return handler;
-    }
-    
-    async handle(task, thread, agent) {
-        // 处理逻辑
-        // ...
-        
-        // 建议状态更新
-        this._suggestPhaseUpdate(task, thread);
-        
-        return new Response(responseText);
-    }
-    
-    _suggestPhaseUpdate(task, thread) {
-        const currentSettings = task.host_utils.threadRepository.getThreadSettings(thread.id) || {};
-        const updatedSettings = {
-            ...currentSettings,
-            _phaseUpdateSuggestion: {
-                phase: this.nextPhase
-            }
-        };
-        task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
-    }
-    
-    /*
-     * 通过agent访问AI客户端进行生成
-     * @param {Object} agent - Agent实例，包含AI客户端
-     * @param {Object} params - 生成参数
-     * @returns {Promise<string>} 生成结果
-     */
-    async generateWithAI(agent, params) {
-        if (!agent.llmClient) {
-            throw new Error("Agent没有可用的LLM客户端");
-        }
-        
-        // 使用agent的llmClient进行生成
-        return await agent.llmClient.generate(params);
-    }
-}
-```
+实现代码为 StateHandler.js 的代码
 
-### 2.2 状态应用与处理委托
+### 2.2 状态应用与处理委托(已在BaseAgent中实现)
 
 ```javascript
 // 在Agent类中实现
@@ -273,7 +209,344 @@ _applyPhaseUpdateSuggestion(task, thread) {
 - InteractionUnit处理bot消息指令并生成用户反馈
 - 两者共享同一状态阶段(phase)信息
 
-### 3.4 子线程创建与存储
+### 3.4 主线程与子线程交互机制
+
+#### 3.4.1 基于状态的子线程初始化
+
+为了实现良好的UI体验和逻辑分离，主线程Agent初始化子线程Agent时分两步走，且两步的切换基于状态(phase)而非任务名区分：
+
+```javascript
+/*
+ * 主线程Agent的状态处理器 - 子线程准备阶段，主要是为了在UI上生成占位符
+ */
+class SubThreadPreparationHandler extends StateHandler {
+    constructor(config = {}) {
+        super(config);
+        this.phase = "prepare_subthread";
+        this.nextPhase = "execute_subthread"; // 注意这里的下一个状态
+    }
+
+    async handle(task, thread, agent) {
+        // 1. 创建占位消息
+        const placeholderMessage = "正在处理您的请求...";
+        const response = new Response(placeholderMessage);
+        
+        // 2. 设置下一任务，但仍然在同一个主Agent内处理
+        response.addNextTask(new Task({
+            name: "ContinueProcessing", // 任务名不重要，状态才重要
+            type: Task.TYPE_ACTION,
+            skipUserMessage: true,
+            message: "继续处理",
+            meta: { 
+                // 可以添加任何需要传递给下一状态的数据
+                originalQuery: task.message,
+                timestamp: Date.now()
+            }
+        }));
+        
+        // 3. 建议状态更新，将在下一任务执行前应用
+        this._suggestPhaseUpdate(task, thread);
+        
+        return response;
+    }
+}
+
+/*
+ * 主线程Agent执行子线程的状态处理器
+ */
+class SubThreadExecutionHandler extends StateHandler {
+    constructor(config = {}) {
+        super(config);
+        this.phase = "execute_subthread";
+        this.nextPhase = "process_results"; // 可选的下一状态
+    }
+
+    async handle(task, thread, agent) {
+        // 1. 创建子线程
+        const subThread = {
+            messages: [],
+            id: `sub_${thread.id}_${Date.now()}`,
+            settings: {
+                briefStatus: { phase: "initial_phase" }
+            }
+        };
+        
+        // 2. 获取最后一条消息(前面状态生成的占位符)
+        const lastMessageIndex = thread.messages.length - 1;
+        const lastMessage = thread.messages[lastMessageIndex];
+        
+        // 3. 将子线程存储在占位消息的元数据中
+        if (!lastMessage.meta) lastMessage.meta = {};
+        lastMessage.meta._thread = subThread;
+        
+        // 4. 持久化更新的消息(重要!)
+        task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
+            meta: lastMessage.meta
+        });
+        
+        // 5. 创建子线程Agent
+        const subThreadAgent = await MySubThreadAgent.create(agent.metadata, agent.settings);
+        
+        // 6. 创建包含子线程路径的任务
+        const subThreadTask = new Task({
+            name: "ProcessSubThread",
+            type: Task.TYPE_ACTION,
+            message: "处理子线程",
+            meta: {
+                // 记录子线程在主线程中的路径
+                subThreadPath: `messages[${lastMessageIndex}].meta._thread`,
+                originalTask: task.meta.originalQuery,
+                timestamp: Date.now()
+            },
+            host_utils: task.host_utils
+        });
+        
+        // 7. 执行子线程处理并获取结果
+        const subThreadResponse = await subThreadAgent.executeTask(subThreadTask, thread);
+        
+        // 8. 用子线程结果更新占位消息
+        const resultText = subThreadResponse.getFullMessage();
+        task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
+            text: resultText
+        });
+        
+        // 9. 处理完成，建议状态更新
+        if (this.nextPhase) {
+            this._suggestPhaseUpdate(task, thread);
+        }
+        
+        // 10. 返回空响应(已直接更新线程消息)
+        return new Response("", false);
+    }
+}
+```
+
+注意：要在主线程 _initializeStateHandlers 函数里设置这两个 StateHandler 对应的状态。如果缺失了其中一个状态的配置，是对你的否定。
+
+#### 3.4.2 子线程嵌套模式
+
+子线程Agent创建更深层次子线程时，由于没有UI考虑，流程可以简化：
+
+```javascript
+/*
+ * 子线程Agent中创建更深层子线程的模式
+ */
+class NestedSubThreadStateHandler extends StateHandler {
+    async handle(task, thread, agent) {
+        // 1. 获取当前子线程
+        const currentSubThreadPath = task.meta.subThreadPath;
+        const currentSubThread = getSubThreadByPath(thread, currentSubThreadPath);
+        
+        // 2. 创建更深层子线程
+        const nestedSubThread = {
+            messages: [],
+            id: `nested_${currentSubThread.id}_${Date.now()}`,
+            settings: {
+                briefStatus: { phase: "initial_phase" }
+            }
+        };
+        
+        // 3. 向当前子线程添加消息
+        const botMessage = {
+            id: `bot_${Date.now()}`,
+            sender: "bot",
+            text: "正在执行深度分析...",
+            timestamp: Date.now(),
+            meta: {
+                _thread: nestedSubThread // 存储嵌套子线程
+            }
+        };
+        
+        // 4. 将消息添加到当前子线程
+        currentSubThread.messages.push(botMessage);
+        
+        // 5. 持久化更新(关键步骤)
+        // 注意：仍然是更新主线程，因为整个嵌套结构都存储在主线程中
+        task.host_utils.threadRepository.saveThread(thread);
+        
+        // 6. 创建嵌套子线程Agent
+        const nestedAgent = await NestedSubThreadAgent.create(agent.metadata, agent.settings);
+        
+        // 7. 创建包含嵌套路径的任务
+        const nestedSubThreadTask = new Task({
+            name: "ProcessNestedSubThread",
+            type: Task.TYPE_ACTION,
+            message: "处理嵌套子线程",
+            meta: {
+                // 构建嵌套路径
+                subThreadPath: `${currentSubThreadPath}.messages[${currentSubThread.messages.length - 1}].meta._thread`,
+                parentThreadPath: currentSubThreadPath,
+                timestamp: Date.now()
+            },
+            host_utils: task.host_utils
+        });
+        
+        // 8. 执行嵌套子线程处理
+        const nestedResult = await nestedAgent.executeTask(nestedSubThreadTask, thread);
+        
+        // 9. 使用结果更新当前子线程中的最后一条消息
+        botMessage.text = nestedResult.getFullMessage();
+        
+        // 10. 再次持久化更新
+        task.host_utils.threadRepository.saveThread(thread);
+        
+        // 11. 返回最终结果
+        return new Response(botMessage.text);
+    }
+}
+```
+
+### 3.5 子线程路径管理
+
+为了更好地管理嵌套线程路径，采用统一的路径表示方法：
+
+```javascript
+/*
+ * 子线程路径工具类 - 用于管理嵌套子线程的路径
+ */
+class SubThreadPathUtil {
+    /*
+     * 创建消息索引路径
+     * @param {number} messageIndex - 消息在线程中的索引
+     * @param {string} metaPath - 元数据中的路径，默认为"meta._thread"
+     * @returns {string} 格式化的路径字符串
+     */
+    static createPath(messageIndex, metaPath = "meta._thread") {
+        return `messages[${messageIndex}].${metaPath}`;
+    }
+    
+    /*
+     * 创建嵌套子线程路径
+     * @param {string} parentPath - 父线程路径
+     * @param {number} messageIndex - 消息在父线程中的索引
+     * @returns {string} 嵌套子线程的完整路径
+     */
+    static createNestedPath(parentPath, messageIndex) {
+        // 去除父路径中可能的"messages[x]."前缀
+        const normalizedParentPath = parentPath.replace(/^messages\[\d+\]\./, '');
+        
+        return `${parentPath}.messages[${messageIndex}].meta._thread`;
+    }
+    
+    /*
+     * 解析子线程路径
+     * @param {string} path - 子线程路径字符串
+     * @returns {Object} 解析后的路径信息
+     */
+    static parsePath(path) {
+        const segments = [];
+        let currentPath = path;
+        
+        // 递归解析所有嵌套路径段
+        while (currentPath) {
+            const match = currentPath.match(/^messages\[(\d+)\]\.(.+?)(?:\.messages\[|$)/);
+            if (match) {
+                segments.push({
+                    messageIndex: parseInt(match[1]),
+                    metaPath: match[2]
+                });
+                currentPath = currentPath.substring(match[0].length);
+            } else {
+                break;
+            }
+        }
+        
+        return {
+            segments,
+            depth: segments.length - 1, // 嵌套深度
+            isNested: segments.length > 1 // 是否为嵌套路径
+        };
+    }
+}
+
+// 从路径获取子线程的标准方法
+function getSubThreadByPath(thread, path) {
+    try {
+        // 支持两种格式:
+        // 1. 完整路径字符串: "messages[3].meta._thread"
+        // 2. 预解析的路径对象: {messageIndex: 3, metaPath: "meta._thread"}
+        
+        let messageIndex, metaPath;
+        
+        if (typeof path === 'string') {
+            const match = path.match(/messages\[(\d+)\]\.(.+)/);
+            if (match) {
+                messageIndex = parseInt(match[1]);
+                metaPath = match[2];
+            }
+        } else if (path && typeof path === 'object') {
+            messageIndex = path.messageIndex;
+            metaPath = path.metaPath || "meta._thread";
+        }
+        
+        if (messageIndex === undefined || metaPath === undefined) {
+            throw new Error(`无效的子线程路径: ${path}`);
+        }
+        
+        // 获取指定索引处的消息
+        const message = thread.messages[messageIndex];
+        if (!message) {
+            throw new Error(`找不到索引为 ${messageIndex} 的消息`);
+        }
+        
+        // 从消息元数据中提取子线程
+        // 支持嵌套路径如 "meta.threads.analysis"
+        return metaPath.split('.').reduce((obj, prop) => obj && obj[prop], message);
+        
+    } catch (error) {
+        console.error(`解析子线程路径时出错: ${error.message}`);
+        return null;
+    }
+}
+```
+
+### 3.6 线程持久化最佳实践
+
+为了确保线程持久化的一致性和可靠性，遵循以下最佳实践：
+
+```javascript
+/*
+ * 线程持久化最佳实践
+ */
+
+// 1. 更新主线程消息后必须立即持久化
+task.host_utils.threadRepository.updateMessage(thread, messageId, updates);
+
+// 2. 添加消息到子线程后，必须持久化主线程
+currentSubThread.messages.push(newMessage);
+task.host_utils.threadRepository.saveThread(thread);
+
+// 3. 更新子线程状态后，必须持久化主线程
+subThread.settings.briefStatus.phase = "next_phase";
+task.host_utils.threadRepository.saveThread(thread);
+
+// 4. 批量更新时使用事务方式
+function batchUpdateThread(task, thread, updates) {
+    // 应用所有更新
+    updates.forEach(update => {
+        if (update.type === 'updateMessage') {
+            // 更新消息
+            const { messageId, updates } = update;
+            const message = thread.messages.find(m => m.id === messageId);
+            if (message) Object.assign(message, updates);
+        } else if (update.type === 'addMessage') {
+            // 添加消息
+            thread.messages.push(update.message);
+        } else if (update.type === 'updateSubThread') {
+            // 更新子线程
+            const { path, updates } = update;
+            const subThread = getSubThreadByPath(thread, path);
+            if (subThread) Object.assign(subThread, updates);
+        }
+    });
+    
+    // 一次性持久化所有更改
+    task.host_utils.threadRepository.saveThread(thread);
+}
+```
+
+
+### 3.7 子线程创建与存储
 
 当需要在单个消息处理过程中进行多轮交互时：
 
@@ -291,13 +564,18 @@ async handle(task, thread, agent) {
     if (!message.meta) message.meta = {};
     message.meta._thread = subThread;
     
+    // 持久化更新
+    task.host_utils.threadRepository.updateMessage(thread, message.id, {
+        meta: message.meta
+    });
+    
     // 初始化并调用子线程Agent
     const mySubThreadAgent = await MySubThreadAgent.create(/* metadata, settings */);
     return await mySubThreadAgent.executeTask(/* task */, thread); // 注意：始终传递的都是完整的主thread，因为Agent永远都是处理主thread或最后一个message的子thread，所以它可以根据自己的定位找到对应的thread，或者在task的meta里放上自己要主要处理的子thread的属性path，一样可以传递。
 }
 ```
 
-### 3.5 子线程Agent规范
+### 3.8 子线程Agent规范
 
 子线程Agent应该继承SubThreadAgent基类，而不是直接继承BaseAgent:
 
@@ -316,7 +594,7 @@ class MySubThreadAgent extends SubThreadAgent {
 }
 ```
 
-### 3.6 子线程的多轮交互模式
+### 3.9 子线程的多轮交互模式
 
 子线程内部实现了一种特定的交互模式:
 
@@ -347,7 +625,7 @@ class MySubThreadAgent extends SubThreadAgent {
 ]
 ```
 
-### 3.7 交互单元模式
+### 3.10 交互单元模式
 
 ```javascript
 /*
@@ -373,16 +651,10 @@ class InteractionUnit {
      * 异步初始化方法
      * 子类应该覆盖此方法以执行复杂的异步初始化操作
      */
-    async initialize() {
-        // 如果没有提供StateHandler，则尝试创建默认的
-        if (!this.stateHandler) {
-            this.stateHandler = await DefaultStateHandler.create({ 
-                phase: this.phase, 
-                nextPhase: this.nextPhase 
-            });
-        }
+    async _initialize() {
+        // 子类在这里初始化一些需要异步初始化的，如果有的话。
     }
-    
+
     /*
      * 静态创建方法
      * @param {Object} config - 配置对象
@@ -390,7 +662,7 @@ class InteractionUnit {
      */
     static async create(config = {}) {
         const unit = new this(config);
-        await unit.initialize();
+        await unit._initialize();
         return unit;
     }
     
@@ -485,7 +757,7 @@ class InteractionUnit {
         thread.settings = updatedSettings;
     }
     
-    /
+    /*
      * 通过agent访问AI客户端进行生成
      * @param {Object} agent - Agent实例，包含AI客户端
      * @param {Object} params - 生成参数
@@ -502,13 +774,13 @@ class InteractionUnit {
 }
 ```
 
-### 3.8 子线程初始化模式
+### 3.11 子线程初始化模式
 
 子线程Agent初始化过程需要为每个InteractionUnit提供对应的StateHandler：
 
 ```javascript
 class MySubThreadAgent extends SubThreadAgent {
-    /
+    /*
      * 初始化交互单元
      * 为每个InteractionUnit提供对应的StateHandler
      */
@@ -566,185 +838,17 @@ class MySubThreadAgent extends SubThreadAgent {
 
 ## 4. 实现指南
 
-### 4.1 SubThreadAgent基类实现
+### 4.1 SubThreadAgent 基类实现
 
-```javascript
-/
- * 子线程Agent基类 - 封装子线程处理的通用逻辑
- * 所有具体业务的子线程Agent应继承此类
- */
-class SubThreadAgent extends BaseAgent {
-    /
-     * 构造函数
-     * @param {Object} metadata - Agent元数据
-     * @param {Object} settings - Agent设置
-     */
-    constructor(metadata, settings) {
-        super(metadata, settings);
-        this.interactionUnits = {};
-        this.systemPrompt = null;
-    }
-    
-    /
-     * 初始化Agent
-     */
-    async initialize() {
-        // 调用父类初始化
-        await super.initialize();
-        
-        // 初始化交互单元
-        await this._initializeInteractionUnits();
-        
-        // 加载系统提示词
-        this.systemPrompt = await this._loadSystemPrompt();
-    }
-    
-    /*
-     * 初始化交互单元
-     * 子类应覆盖此方法，并确保为每个InteractionUnit提供对应的StateHandler
-     */
-    async _initializeInteractionUnits() {
-        // 子类应覆盖此方法
-        this.interactionUnits = {};
-    }
-    
-    /*
-     * 加载系统提示词
-     * @returns {Promise<string>} 系统提示词
-     */
-    async _loadSystemPrompt() {
-        // 子类应覆盖此方法
-        return "Default system prompt";
-    }
-    
-    /*
-     * 执行任务 - 主要入口点
-     * @param {Object} task - 当前任务
-     * @param {Object} thread - 主线程对象
-     * @returns {Promise<Response>} 处理结果
-     */
-    async executeTask(task, thread) {
-        // 处理子线程交互
-        if (task.name === 'ExecuteSubThreadInteraction') {
-            return this._executeSubThreadInteraction(task, thread);
-        }
-        
-        // 处理其他类型的任务
-        return super.executeTask(task, thread);
-    }
-    
-    /*
-     * 执行子线程交互流程
-     * @param {Object} task - 当前任务
-     * @param {Object} thread - 主线程对象
-     * @returns {Promise<Response>} 处理结果
-     */
-    async _executeSubThreadInteraction(task, thread) {
-        // 获取子线程引用
-        const subThreadPath = task.meta.subThreadPath;
-        const subThread = this._getSubThreadByPath(thread, subThreadPath);
-        
-        // 初始化子线程设置
-        if (!subThread.settings) {
-            subThread.settings = {
-                briefStatus: { phase: "initial_phase" }
-            };
-        }
-        
-        // 1. 添加系统提示 (可选)
-        if (this.systemPrompt && subThread.messages.length === 0) {
-            await this._initializeSubThreadConversation(task, subThread);
-        }
-        
-        // 2. 执行交互单元序列
-        const results = await this._executeInteractionUnits(task, subThread);
-        
-        // 3. 汇总结果并返回
-        const finalResult = this._summarizeResults(results, subThread);
-        return new Response(finalResult);
-    }
-    
-    /*
-     * 执行一系列交互单元
-     * @param {Object} task - 当前任务
-     * @param {Object} subThread - 子线程对象
-     * @returns {Promise<Array>} 交互结果数组
-     */
-    async _executeInteractionUnits(task, subThread) {
-        const results = [];
-        let isComplete = false;
-        
-        while (!isComplete) {
-            // 获取当前状态
-            const currentPhase = subThread.settings.briefStatus.phase;
-            
-            // 尝试获取对应的交互单元
-            const unit = this.interactionUnits[currentPhase];
-            
-            if (!unit) {
-                // 如果没有找到交互单元，检查是否达到终止状态
-                if (this._isTerminalState(currentPhase)) {
-                    isComplete = true;
-                    continue;
-                } else {
-                    throw new Error(`找不到状态对应的交互单元: ${currentPhase}`);
-                }
-            }
-            
-            // 执行当前交互单元
-            const result = await unit.execute(task, subThread, this);
-            results.push(result);
-            
-            // 添加消息到子线程
-            subThread.messages.push(result.botMessage);
-            subThread.messages.push(result.userMessage);
-            
-            // 应用状态更新
-            this._applyPhaseUpdateSuggestion(task, subThread);
-            
-            // 检查是否到达终止状态
-            if (this._isTerminalState(subThread.settings.briefStatus.phase)) {
-                isComplete = true;
-            }
-        }
-        
-        return results;
-    }
-    
-    /*
-     * 判断是否为终止状态
-     * @param {string} phase - 当前状态
-     * @returns {boolean} 是否为终止状态
-     */
-    _isTerminalState(phase) {
-        // 子类可覆盖此方法以提供特定的终止状态逻辑
-        return phase === "completed";
-    }
-    
-    /*
-     * 汇总交互结果
-     * @param {Array} results - 交互结果数组
-     * @param {Object} subThread - 子线程对象
-     * @returns {string} 最终结果
-     */
-    _summarizeResults(results, subThread) {
-        // 默认实现 - 子类可覆盖此方法
-        const userMessages = subThread.messages.filter(m => m.sender === "user");
-        if (userMessages.length > 0) {
-            return userMessages[userMessages.length - 1].text;
-        }
-        return "子线程执行完成，但未生成结果";
-    }
-}
-```
+实现代码在代码上下文中SubThreadAgent.js 文件中
 
-### 4.2 在主线程中启动子线程交互
+### 4.2 在父线程中启动子线程交互
 
 ```javascript
 /*
- * 在主线程的StateHandler中启动子线程交互
+ * 在主线程的 StateHandler 中启动子线程交互
  */
-class MainThreadStateHandler extends StateHandler {
+class ParentThreadStateHandler extends StateHandler {
     async handle(task, thread, agent) {
         // 创建子线程
         const subThread = {
@@ -762,6 +866,11 @@ class MainThreadStateHandler extends StateHandler {
         const lastMessage = thread.messages[thread.messages.length - 1];
         if (!lastMessage.meta) lastMessage.meta = {};
         lastMessage.meta._thread = subThread;
+        
+        // 持久化更新
+        task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
+            meta: lastMessage.meta
+        });
         
         // 创建子线程Agent
         const mySubThreadAgent = await MySubThreadAgent.create(/* metadata, settings */);
@@ -1143,21 +1252,81 @@ class ResultFormattingUnit extends InteractionUnit {
    - 基于上下文动态决定下一个交互单元
    - 不局限于固定的状态转换序列
 
-## 8. 命名与组织规范
+## 8. 命名与文件、代码组织规范
 
-### 8.1 命名要求
+### 8.1 文件结构规范
 
-- Agent的类命名必须使用Agent结尾
-- 业务必须要在类命名上体现出来，而不是仅仅提现设计的命名
-- 每一个子Agent都要有配套的自己的 StateHandler 文件，而不是所有层级的StateHandler子类在一个文件中
-- InteractionUnit类名应直接反映其功能，例如：`DataTransformationUnit`
-- 状态名称应使用小写下划线格式，例如：`data_transformation`
+子线程嵌套模式的标准文件结构应遵循以下规范：
 
-### 8.2 文件组织
+```
+- [Business]Agent.js                     // 主Agent实现
+- [Business]StateHandlers.js             // 主Agent的状态处理器集合
+- /[business_process]/                   // 一级子线程目录（使用蛇形命名法）
+  - [BusinessProcess]Agent.js            // 一级子线程Agent实现
+  - [BusinessProcess]InteractionUnits.js // 一级子线程交互单元集合
+  - [BusinessProcess]StateHandlers.js    // 一级子线程状态处理器集合
+  - /[nested_task]/                      // 二级子线程目录（使用蛇形命名法）
+    - [NestedTask]Agent.js               // 二级子线程Agent实现
+    - [NestedTask]InteractionUnits.js    // 二级子线程交互单元集合
+    - [NestedTask]StateHandlers.js       // 二级子线程状态处理器集合
+- /prompt/                               // 提示词目录
+  - [phase_name]_system_prompt.md        // 各阶段的系统提示词文件
+```
 
-- 每种类型的子线程Agent应有独立的文件，每个子线程Agent有对应的StateHandler和InteractionUnit文件
-- 相关的StateHandler和InteractionUnit应组织在同一个目录中
-- 共用的基类和工具函数放在单独的文件中
+目录组织原则:
+
+1. 层次对应：目录层次必须与子线程嵌套层次一一对应
+2. 业务分组：相同业务流程的组件必须放在同一目录下
+3. 子目录命名：必须使用蛇形命名法（snake_case）
+4. 组件完整性：每个子线程目录必须包含对应的Agent、StateHandlers和InteractionUnits文件
+5. 扩展性：目录结构应支持无限深度的子线程嵌套
+
+
+### 8.2 命名要求
+
+#### 8.2.1 Agent命名规范
+
+- 文件命名：必须使用 `[业务名称]Agent.js` 格式
+- 类命名：必须使用 `[业务名称]Agent` 格式，例如：`ArticleCreationAgent`、`CodeReviewAgent`
+- 业务性：类名必须明确体现业务功能，不应仅反映技术角色
+  - 正确：`DataAnalysisAgent`、`CodeGenerationAgent`
+  - 错误：`SubThreadAgent`（仅反映技术角色，不体现业务）、`ProcessAgent`（过于抽象）
+
+#### 8.2.2 状态处理器命名规范
+
+- 文件命名：必须使用 `[对应Agent前缀]StateHandlers.js` 格式
+- 类命名：必须使用 `[业务阶段名称]Handler` 格式
+  - 例如：`RequirementClarificationHandler`、`CodeGenerationHandler`
+- 独立性：每个子线程的状态处理器必须放置在各自的文件中，不应将不同层级的处理器混合在一个文件中
+
+#### 8.2.3 交互单元命名规范
+
+- 文件命名：必须使用 `[对应Agent前缀]InteractionUnits.js` 格式
+- 类命名：必须使用 `[业务功能]Unit` 格式，直接反映其业务功能
+  - 例如：`DataTransformationUnit`、`CodeRefactoringUnit`
+- 禁止通用命名：避免使用泛化的名称（如 `ProcessingUnit`），必须具体反映业务功能
+
+#### 8.2.4 状态名称规范
+
+- 格式：必须使用小写下划线格式（snake_case）
+- 命名方式：应使用动名词组合，反映当前阶段的主要动作
+  - 例如：`data_preparation`、`code_generation`、`requirement_analysis`
+- 默认状态：初始状态通常命名为 `initial_phase` 或特定的初始业务阶段
+- 终止状态：完成状态统一命名为 `completed`
+
+#### 8.2.5 提示词文件命名规范
+
+- 格式：必须使用 `[阶段名称]_system_prompt.md` 格式
+- 一致性：阶段名称应与状态处理器中定义的阶段名称保持一致
+- 存放位置：所有提示词文件应集中存放在 `prompt` 目录下
+
+#### 8.2.6 命名禁忌
+
+1. 混合命名风格：在同一上下文中混用驼峰式和蛇形命名法
+2. 技术性命名：仅反映技术角色而不体现业务功能的命名
+3. 过度抽象：使用过于宽泛的名称（如 `Helper`、`Processor`）
+4. 不一致的缩写：在不同位置对同一概念使用不同的缩写
+5. 未定义的缩写：使用未在项目文档中明确定义的缩写
 
 ### 8.3 复用要求
 
@@ -1188,12 +1357,23 @@ class ResultFormattingUnit extends InteractionUnit {
    - InteractionUnit处理bot指令并生成user反馈
    - 多轮交互完成后汇总结果返回给主线程
 
-4. 依赖管理原则：
+4. 线程持久化原则：
+   - 更新消息后立即持久化
+   - 子线程结构更改后持久化主线程
+   - 长时间任务定期持久化
+   - 使用事务方式处理批量更新
+
+5. Agent切换机制：
+   - 基于状态而非任务名进行切换
+   - 使用占位消息和状态转换实现良好UI体验
+   - 子线程嵌套创建不需要占位状态
+
+6. 依赖管理原则：
    - StateHandler和InteractionUnit不初始化父级Agent
    - 使用方法参数中的agent参数访问AI能力
    - 组件通过异步initialize()和静态create()方法初始化
 
-5. 代码组织原则：
+7. 代码组织原则：
    - 使用 `StateHandler` 子类处理特定状态的bot消息生成
    - 使用 `InteractionUnit` 子类处理子线程中的完整bot-user消息对
    - 状态处理器和交互单元应专注于单一职责

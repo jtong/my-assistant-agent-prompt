@@ -41,7 +41,6 @@ input:
   instruction: |
     {{#partial }}
     ```yaml
-    # path: path: .ai_helper/dev/context/working_prompt/redesign.md
     path: .ai_helper/dev/context/working_prompt/follow_design_coding.md
     render: true
     ```
