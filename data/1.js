@@ -115,10 +115,7 @@ const thread = {
                         {
                             id: "sub_msg_4",
                             sender: "bot",
-                            text: "<生成任务列表>",
-                            meta: {
-                                sub_phase: "task_generation"
-                            }
+                            text: "<生成任务列表>"
                         },
                         // 第三阶段：内容编写
                         {

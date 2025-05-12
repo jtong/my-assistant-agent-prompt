@@ -39,8 +39,4 @@ render: false
 
 ## 任务
 
-我希望 改进这个规范，我们需要把规范中子thread的处理进一步完善。需要完善的点是对message和thread的持久化：
-
-- 是否在Agent和 InteractionUnit 和 StateHandler 之间始终传递的都是主thread，而不是任何以及子thread，避免上下文脱离
-- 看一下现在的持久化是否会存在脏数据的可能性。
-- InteractionUnit 和 StateHandler 返回的都应该是Response，那么什么时候更新主thread需要考虑一下，也要避免脏数据问题。
+我希望 检查一下这个规范的文档内容，是否有你觉得有歧义的地方。

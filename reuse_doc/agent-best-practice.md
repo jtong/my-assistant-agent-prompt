@@ -6,11 +6,14 @@
 注意：此处的线程不是多线程并发中的线程，而是表达一个对话的完整列表。
 
 - 主线程：用户与Agent的主要对话线程，包含消息列表和设置。
-- 子线程：嵌套在主线程消息元数据中的次级对话线程，用于处理复杂任务。
+- 子线程：嵌套在上级线程（也称作父线程）消息元数据中的次级对话线程，用于处理复杂任务。上级线程可以是主线程也可以是其他子线程
 - StateHandler：处理特定状态的组件，负责生成消息内容和执行状态转换。
 - InteractionUnit：子线程中一轮完整对话（bot-user）的处理单元。
 - Phase：线程的处理阶段，存储在settings.briefStatus.phase中。
 - Response：Agent和组件返回的响应对象，包含消息内容和元数据。
+
+## 1.1 缩写或
+- 主Agent： 直接处理用户输入的顶层Agent，同时也是主线程的Agent的意思
 
 ## 2. Agent 核心接口规范
 
@@ -212,27 +215,123 @@ _applyPhaseUpdateSuggestion(task, thread) {
 }
 ```
 
-## 5. 持久化责任分配与时机
+## 5. 持久化机制与责任分配
 
-### 5.1 分层持久化责任模型
+### 5.1 持久化基本原则
 
-1. Agent 持久化职责
-   - 负责整体对话线程结构和新增消息的持久化
-   - 负责子线程创建和结果汇总的持久化
+1. 完整性原则：每次持久化必须保存完整的数据状态
+2. 及时性原则：关键操作完成后立即持久化
+3. 层次性原则：修改嵌套结构时，保存最外层主线程
+4. 一致性原则：确保内存中的thread对象与持久化后的状态完全一致
 
-2. StateHandler 持久化职责
-   - 负责状态变更的持久化，特别是phase状态转换
-   - 通过`_suggestPhaseUpdate`持久化状态建议
+### 5.2 持久化职责分配
 
-3. InteractionUnit 持久化职责
-   - 负责交互结果的持久化，特别是将bot-user消息对添加到子线程后
+1. Agent 职责：
+   - 主要负责委托StateHandler进行处理
+   - 通过`_handleMessageProcessing`转发任务
+   - 负责应用状态更新建议
+
+2. StateHandler 职责：
+   - 线程结构和整体状态的持久化
+   - 子线程创建和结果汇总时负责持久化
+   - 状态变更建议的持久化
+   - 使用`threadRepository.updateMessage`和`threadRepository.saveThread`
+
+3. InteractionUnit 职责：
+   - 分步持久化bot和user消息：
+     - 先持久化bot消息
+     - 再持久化user消息
+   - 每次添加消息后立即调用`threadRepository.saveThread()`
+
+### 5.3 必须持久化的关键时机点
+
+1. 子线程创建完成后（StateHandler中）：
+   ```javascript
+   lastMessage.meta._thread = subThread;
+   task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
+       meta: lastMessage.meta
+   });
+   ```
+
+2. 状态更新建议添加后（StateHandler中）：
+   ```javascript
+   task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
+   ```
+
+3. 生成bot消息后立即持久化（InteractionUnit中）：
+   ```javascript
+   // 1. 委托StateHandler生成bot消息
+   const response = await this.stateHandler.handle(task, thread, agent);
+   const botMessageText = response.getFullMessage();
+   
+   // 2. 创建bot消息对象
+   const botMessage = {
+       id: `sub_bot_${Date.now()}`,
+       sender: "bot",
+       text: botMessageText,
+       timestamp: Date.now()
+   };
+   
+   // 3. 添加到子线程并立即持久化
+   subThread.messages.push(botMessage);
+   task.host_utils.threadRepository.saveThread(thread);
+   ```
+
+4. 生成user消息后立即持久化（InteractionUnit中）：
+   ```javascript
+   // 1. 处理指令并生成user反馈
+   const userMessageText = await this.generateUserMessage(botMessage, task, thread, agent);
+   
+   // 2. 创建user消息对象
+   const userMessage = {
+       id: `sub_user_${Date.now()}`,
+       sender: "user",
+       text: userMessageText,
+       timestamp: Date.now()
+   };
+   
+   // 3. 添加到子线程并立即持久化
+   subThread.messages.push(userMessage);
+   task.host_utils.threadRepository.saveThread(thread);
+   ```
 
 
-## 6. Response驱动的消息更新机制
+### 5.4 持久化方法选择标准
+
+1. 使用updateMessage：
+   - 仅修改单个消息且不涉及结构变化时
+   - 例：更新占位消息内容
+
+2. 使用updateThreadSettings：
+   - 仅修改线程设置（如状态）时
+   - 例：更新阶段状态
+
+3. 使用saveThread：
+   - 修改多个消息或线程结构变化时
+   - 添加新消息到线程时
+   - 完成复杂操作需确保数据一致性时
+
+### 5.5 嵌套结构持久化规则
+
+1. 向上传播原则：
+   - 修改任何深度的子线程后，保存最外层主线程
+   - 子线程存储在主线程的消息元数据中，需要完整持久化
+
+2. 完整持久化示例（StateHandler中）：
+   ```javascript
+   // 修改深层子线程
+   const outlineThread = getSubThreadByPath(thread, outlineThreadPath);
+   outlineThread.messages.push(newMessage);
+   
+   // 直接持久化主线程，一次性保存所有变更
+   task.host_utils.threadRepository.saveThread(thread);
+   ```
+
+## 6 Response驱动的消息更新机制
 
 ### 6.1 子Thread 的 Response 必须是同步的
 
-每个子 Thread的Agent 和其 StateHandler 返回的Response对象应当是同步的，而不是stream
+每个子Thread的Agent和其StateHandler返回的Response对象应当是同步的，而不是stream：
 
 ```javascript
 // 在Response中添加消息更新元数据
@@ -241,9 +340,10 @@ const response = new Response("生成的内容");
 
 ### 6.2 处理 Response 并持久化 thread 的标准流程
 
-- InteractionUnit 接到 StateHandler 返回的 Response 后，取出 fullText，做为bot message存到对应的子 thread 中。
-- InteractionUnit 调用相关函数生成 user message 后，再存到对应的子 thread 中。（这里没有使用Response）
-- StateHandler 接到 子 thread 的 Agent 返回的 Response 后，取出 fullText，更新子 thread 所属的message。
+- InteractionUnit 接到 StateHandler 返回的 Response 后，取出 fullText，做为bot message存到对应的子 thread 中，并立即持久化
+- InteractionUnit 调用相关函数生成 user message 后，再存到对应的子 thread 中，并立即持久化（这里没有使用Response）
+- StateHandler 接到 子 thread 的 Agent 返回的 Response 后，直接返回，由持有自己的 InteractionUnit 或 Agent 持久化 Response 对应的 message。
+
 
 ## 7. 子线程交互模型
 
@@ -304,10 +404,10 @@ const response = new Response("生成的内容");
 
 ### 7.3 核心组件
 
-#### 3.3.1 SubThreadAgent 基类
+#### 7.3.1 SubThreadAgent 基类
 
 代码：
-- 实现代码在代码上下文中SubThreadAgent.js 文件中
+- 实现代码在代码上下文中 SubThreadAgent.js 文件中
 
 职责:
 - 封装子线程处理的通用逻辑
@@ -323,8 +423,10 @@ const response = new Response("生成的内容");
 - `_executeInteractionUnits(task, subThread)`: 执行一系列交互单元
 - `_summarizeResults(results, subThread)`: 汇总交互结果
 
-#### 3.3.2 InteractionUnit
+#### 7.3.2 InteractionUnit
 
+代码：
+- 实现代码在代码上下文中 InteractionUnit.js 文件中
 
 职责:
 - 处理一轮完整的bot-user交互
@@ -339,7 +441,7 @@ const response = new Response("生成的内容");
 - `generateUserMessage(botMessage, task, thread, agent)`: 处理bot指令并生成user反馈
 - `_suggestPhaseUpdate(task, thread)`: 建议下一个状态阶段
 
-#### 3.3.3 StateHandler与InteractionUnit的关系
+#### 7.3.3 StateHandler与InteractionUnit的关系
 
 - StateHandler专注于生成bot消息内容
 - InteractionUnit持有StateHandler实例
@@ -366,7 +468,7 @@ class SubThreadPreparationHandler extends StateHandler {
     }
 
     async handle(task, thread, agent) {
-        // 1. 创建占位消息
+        // 1. 创建占位消息，仅作占位显示，会在execute_subthread结束时，用子线程结果更新占位消息
         const placeholderMessage = "正在处理您的请求...";
         const response = new Response(placeholderMessage);
         
@@ -443,19 +545,13 @@ class SubThreadExecutionHandler extends StateHandler {
         // 7. 执行子线程处理并获取结果
         const subThreadResponse = await subThreadAgent.executeTask(subThreadTask, thread);
         
-        // 8. 用子线程结果更新占位消息
-        const resultText = subThreadResponse.getFullMessage();
-        task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
-            text: resultText
-        });
-        
-        // 9. 处理完成，建议状态更新
+        // 8. 处理完成，建议状态更新
         if (this.nextPhase) {
             this._suggestPhaseUpdate(task, thread);
         }
         
-        // 10. 返回空响应(已直接更新线程消息)
-        return new Response("", false);
+        // 9. 返回响应(已直接更新线程消息)
+        return subThreadResponse;
     }
 }
 ```
@@ -523,23 +619,21 @@ class NestedSubThreadStateHandler extends StateHandler {
         // 8. 执行嵌套子线程处理
         const nestedResult = await nestedAgent.executeTask(nestedSubThreadTask, thread);
         
-        // 9. 使用结果更新当前子线程中的最后一条消息
-        botMessage.text = nestedResult.getFullMessage();
+        // 9. 处理完成，建议状态更新
+        if (this.nextPhase) {
+           this._suggestPhaseUpdate(task, thread);
+        }     
         
-        // 10. 再次持久化更新
-        task.host_utils.threadRepository.saveThread(thread);
-        
-        // 11. 返回最终结果
-        return new Response(botMessage.text);
+        // 10. 返回最终结果
+        return nestedResult;
     }
 }
 ```
 
 
-
 ## 9. 子线程初始化模式
 
-子线程Agent初始化过程需要为每个InteractionUnit提供对应的StateHandler：
+子线程Agent初始化过程需要为每个 InteractionUnit 提供对应的 StateHandler ：
 
 ```javascript
 class MySubThreadAgent extends SubThreadAgent {
