@@ -92,71 +92,51 @@ async loadOperations(agent) { //主Agent才必须实现，子Agent不需要
 ### 3.2 子线程路径管理
 
 ```javascript
-/*
- * 子线程路径工具类 - 用于管理嵌套子线程的路径
+
+/**
+ * 根据路径获取子线程
+ * @param {Object} thread - 主线程对象
+ * @param {string|Object} path - 子线程路径，支持两种格式：
+ *   - 对象形式: {messageIndex: 3, metaPath: "meta._thread"}
+ *   - 直接访问路径，如: "messages.3.meta._thread"
+ * @returns {Object|null} 子线程对象或null（如果路径无效）
  */
-class SubThreadPathUtil {
-    /*
-     * 创建消息索引路径
-     * @param {number} messageIndex - 消息在线程中的索引
-     * @param {string} metaPath - 元数据中的路径，默认为"meta._thread"
-     * @returns {string} 格式化的路径字符串
-     */
-    static createPath(messageIndex, metaPath = "meta._thread") {
-        return `messages[${messageIndex}].${metaPath}`;
-    }
-    
-    /*
-     * 创建嵌套子线程路径
-     * @param {string} parentPath - 父线程路径
-     * @param {number} messageIndex - 消息在父线程中的索引
-     * @returns {string} 嵌套子线程的完整路径
-     */
-    static createNestedPath(parentPath, messageIndex) {
-        // 去除父路径中可能的"messages[x]."前缀
-        const normalizedParentPath = parentPath.replace(/^messages\[\d+\]\./, '');
-        
-        return `${parentPath}.messages[${messageIndex}].meta._thread`;
-    }
-}
-
 function getSubThreadByPath(thread, path) {
-   try {
-      // 支持两种格式:
-      // 1. 完整路径字符串: "messages[3].meta._thread"
-      // 2. 预解析的路径对象: {messageIndex: 3, metaPath: "meta._thread"}
+    try {
+        let messageIndex, metaPath;
 
-      let messageIndex, metaPath;
+        // 处理对象形式的路径
+        if (path && typeof path === 'object') {
+            messageIndex = path.messageIndex;
+            metaPath = path.metaPath || "meta._thread";
+        }
+        // 处理字符串形式的路径（直接的JavaScript访问路径）
+        else if (typeof path === 'string') {
+            const parts = path.split('.');
+            if (parts[0] === 'messages' && !isNaN(parts[1])) {
+                messageIndex = parseInt(parts[1]);
+                metaPath = parts.slice(2).join('.');
+            }
+        }
 
-      if (typeof path === 'string') {
-         const match = path.match(/messages\[(\d+)\]\.(.+)/);
-         if (match) {
-            messageIndex = parseInt(match[1]);
-            metaPath = match[2];
-         }
-      } else if (path && typeof path === 'object') {
-         messageIndex = path.messageIndex;
-         metaPath = path.metaPath || "meta._thread";
-      }
+        // 验证路径有效性
+        if (messageIndex === undefined || metaPath === undefined) {
+            throw new Error(`无效的子线程路径: ${path}`);
+        }
 
-      if (messageIndex === undefined || metaPath === undefined) {
-         throw new Error(`无效的子线程路径: ${path}`);
-      }
+        // 确保消息索引在有效范围内
+        if (!thread?.messages || messageIndex < 0 || messageIndex >= thread.messages.length) {
+            throw new Error(`消息索引 ${messageIndex} 超出范围`);
+        }
 
-      // 获取指定索引处的消息
-      const message = thread.messages[messageIndex];
-      if (!message) {
-         throw new Error(`找不到索引为 ${messageIndex} 的消息`);
-      }
+        // 获取消息并访问指定路径
+        const message = thread.messages[messageIndex];
+        return metaPath.split('.').reduce((obj, prop) => obj?.[prop], message);
 
-      // 从消息元数据中提取子线程
-      // 支持嵌套路径如 "meta.threads.analysis"
-      return metaPath.split('.').reduce((obj, prop) => obj && obj[prop], message);
-
-   } catch (error) {
-      console.error(`解析子线程路径时出错: ${error.message}`);
-      return null;
-   }
+    } catch (error) {
+        console.error(`解析子线程路径时出错: ${error.message}`);
+        return null;
+    }
 }
 ```
 
@@ -535,7 +515,7 @@ class SubThreadExecutionHandler extends StateHandler {
             message: "处理子线程",
             meta: {
                 // 记录子线程在主线程中的路径
-                subThreadPath: `messages[${lastMessageIndex}].meta._thread`,
+                subThreadPath: `messages.${lastMessageIndex}.meta._thread`,
                 originalTask: task.meta.originalQuery,
                 timestamp: Date.now()
             },
@@ -609,7 +589,7 @@ class NestedSubThreadStateHandler extends StateHandler {
             message: "处理嵌套子线程",
             meta: {
                 // 构建嵌套路径
-                subThreadPath: `${currentSubThreadPath}.messages[${currentSubThread.messages.length - 1}].meta._thread`,
+                subThreadPath: `${currentSubThreadPath}.messages.${currentSubThread.messages.length - 1}.meta._thread`,
                 parentThreadPath: currentSubThreadPath,
                 timestamp: Date.now()
             },

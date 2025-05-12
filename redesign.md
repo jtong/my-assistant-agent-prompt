@@ -39,4 +39,6 @@ render: false
 
 ## 任务
 
-我希望 检查一下这个规范的文档内容，是否有你觉得有歧义的地方。
+我希望 改进一下基类中的getSubThreadByPath函数
+
+path可能是： messages[3].meta._thread ， 目前实现好像没处理中括号
