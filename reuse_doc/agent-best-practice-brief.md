@@ -162,6 +162,11 @@ async _initializeInteractionUnits() {
 - 任何子线程修改后，必须持久化最外层主线程
 - 即使修改多层嵌套的子线程，也是调用一次`saveThread(thread)`
 
+### 6.3 跳过Bot消息创建机制
+- 在某些情况下，StateHandler 可能需要直接更新已经存在的消息，而不是创建新的消息。例如，当StateHandler 已经创建并更新了一个占位消息时，可以使用 `skipBotMessageCreation` 标志告知 InteractionUnit 跳过创建新的bot消息。
+- InteractionUnit 在执行过程中会检查 Response 的 meta 中是否包含 `skipBotMessageCreation` 标志，如果存在则不创建新的bot消息，而是使用子线程中已有的最后一条bot消息。
+- 这种机制特别适用于需要显示进度的场景，如初始显示"正在生成..."，然后更新为最终结果的情况。
+
 ## 7. 文件结构与命名规范
 
 ### 7.1 标准目录结构
