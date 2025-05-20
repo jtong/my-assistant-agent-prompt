@@ -34,4 +34,4 @@ render: false
 
 ## 任务
 
-我希望 生成“刘慈欣的报告“，明明前面规划了任务，后面却没有按照AI生成的规划任务去做，而是靠提示词写死的。这个我希望要按照前面生成的提示词来推演。
+我希望 InteractionUnit 的 generateUserMessage 只专注于生成 user 消息。现在是连bot 消息都放在这里了。前面那些生成bot消息的其实应该放在它的 StateHandler 里。而不是现在这样在StateHandler里写死bot消息，搞得出了两个bot 消息。
