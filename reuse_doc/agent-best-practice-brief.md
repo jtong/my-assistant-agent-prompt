@@ -37,10 +37,9 @@
 
 ### 2.3 AIAdapter 通信规范
 
-AIAdapter 是统一管理 AI 通信的单例适配器，所有 AI 调用必须通过此适配器进行：
 
 - 目的：所有 AI 调用统一通过 Adapter 接口进行，避免各种 AI 服务的 API 和数据结构直接入侵代码，降低对特定 AI 服务的依赖
-- 规则：适配器只发送第一层消息，自动排除子线程和虚拟消息，并处理格式转换
+- 规则：适配器只发送第一层消息，自动排除子线程和虚拟消息，并处理格式转换，接口是thread的messages属性的数据。
 
 ```javascript
 // 在 Agent 构造函数中初始化
@@ -56,25 +55,27 @@ constructor(metadata, settings) {
 }
 ```
 
-- 使用：在 StateHandler 中调用 AIAdapter 而非直接调用 AI 服务
+- 使用：在需要调用 AI 时，调用 AIAdapter 而非直接调用 AI 服务
 
 ```javascript
-// 在 StateHandler.handle 方法中
-async handle(task, thread, agent) {
-    const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
-    const systemPrompt = "您是..."; // 系统提示词
-    
-    // 使用 AIAdapter 处理 AI 通信
-    const stream = await AIAdapter.chat(thread, {
-        systemMessage: systemPrompt,
-        stream: true
-    });
-    
-    const response = new Response('');
-    response.setStream(agent.createStream(stream));
-    return response;
-}
+const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
+
+// 消息准备工作由调用者负责
+const messages = thread.messages.filter(msg => !msg.isVirtual); // 只是举例，具体构造messages的逻辑根据场景生成，但注意保证无副作用
+
+// 使用适配器调用 AI
+const stream = await AIAdapter.chat(messages, { //注意，这里的messages是thread的messsages属性的数据结构，要严格使用该数据结构的数据
+   systemMessage: "你是一个助手",
+   stream: true
+});
+
+// 创建响应对象
+const response = new Response('');
+response.setStream(agent.createStream(stream));
+
+return response;
 ```
+
 
 ## 3. 线程管理关键规则
 

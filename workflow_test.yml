@@ -2,8 +2,11 @@ project:
   base_path: ./
   filters:
     - filter_in:
-      - ".ai_helper/agent/chat/workflow_test_agent/**"  #chat agent folder
+      # my_assistant_agent_util
       - ".ai_helper/agent/chat/my_assistant_agent_util/index.js"
+      - ".ai_helper/agent/chat/my_assistant_agent_util/AIAdapter.js"
+
+      - ".ai_helper/agent/chat/workflow_test_agent/**"  #chat agent folder
       # - ".ai_helper/dev/doc/chat/*.md"
       - ".ai_helper/dev/doc/chat/reference/**"
       - ".ai_helper/dev/doc/chat/for_ai/**"
