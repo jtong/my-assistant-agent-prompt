@@ -23,4 +23,4 @@ render: false
 
 ## 任务
 
-我希望 把现有代码中的与AI通讯都换成AIAdapter
+我希望 构造一个测试，可以直接测试 ArticleCreationAgent.js， 要提前准备好初始thread，命令行运行即可
