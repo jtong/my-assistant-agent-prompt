@@ -12,7 +12,7 @@
   - 解决方案是：直接告诉他修改掉，然后更新了文档和文档的brief
 - Task 生成需要构造 chat history，这里处理了一下，发现整体处理chat history的逻辑还没建立，放到parking lot里
 - 给所有的AI对话建立一个基于Thread的adapter，方便查看日志
-
+- 加入了测试
 
 TODO：
 - 然后拿着生成的数据，说哪一条要加入RAG
