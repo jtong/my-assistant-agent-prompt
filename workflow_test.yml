@@ -36,9 +36,12 @@ project:
       - "**/*.log"
       - "*.log"
       - README.md
-    # - ignore:
-    #   - ".ai_helper/dev/doc/chat/*.md"
-    #   # - ".ai_helper/dev/doc/chat/!(reference|usecase)/**"
+    - ignore:
+      - ".ai_helper/agent/chat/workflow_test_agent/test/output"
+      - ".ai_helper/agent/chat/workflow_test_agent/spike"
+      - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
+      # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation_task_gen.js"
+      # - ".ai_helper/dev/doc/chat/!(reference|usecase)/**"
 input:
   git_clone_to_path: .ai_helper/prompt_builder/git_repo
   instruction: |
