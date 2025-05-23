@@ -23,4 +23,4 @@ render: false
 
 ## 任务
 
-我希望 基于当前代码帮我想想，如何写个测试，从任务生成的部分往后执行到最后，而不是现在这样，从生成大纲开始
+我希望 给我讲讲 InteractionUnit 列表被SubThreadAgent执行是怎么切换brief状态的？
