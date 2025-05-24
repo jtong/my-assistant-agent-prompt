@@ -45,7 +45,7 @@ input:
   instruction: |
     {{#partial }}
     ```yaml
-    path: .ai_helper/dev/context/working_prompt/redesign.md
+    path: .ai_helper/dev/context/working_prompt/update_doc.md
     render: true
     ```
     {{/partial }}
