@@ -23,4 +23,4 @@ render: false
 
 ## 任务
 
-我希望 给我讲讲 InteractionUnit 列表被SubThreadAgent执行是怎么切换brief状态的？
+我希望 把测试代码的测试数据拿出去，这样可以过滤掉，避免占用太多token

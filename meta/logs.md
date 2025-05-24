@@ -12,10 +12,15 @@
   - 解决方案是：直接告诉他修改掉，然后更新了文档和文档的brief
 - Task 生成需要构造 chat history，这里处理了一下，发现整体处理chat history的逻辑还没建立，放到parking lot里
 - 给所有的AI对话建立一个基于Thread的adapter，方便查看日志
-- 加入了测试
+- 加入了测试，而且可以基于任务部分状态测试，就是测试数据准备还是比较麻烦
 
 TODO：
 - 然后拿着生成的数据，说哪一条要加入RAG
-- 基于thread的adapter，方便查看日志加入规范
+- [x] 基于thread的adapter，方便查看日志加入规范
 - chat history构造逻辑加入规范
 - 测试加入规范
+- 考虑把InteractionUnit分成Starter和Responser，一个先发消息，一个后发消息，而且Starter可能直接就包着一个Responser
+
+experience:
+
+- 测试可以先执行，跳出InteractionUnit后，用手复制一下thread的json。task的json可以在进去的时候复制。
