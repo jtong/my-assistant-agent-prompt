@@ -39,17 +39,19 @@ project:
     - ignore:
       - ".ai_helper/agent/chat/workflow_test_agent/test/output"
       - ".ai_helper/agent/chat/workflow_test_agent/spike"
-      - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
+      # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
       # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation_task_gen.js"
+      - ".ai_helper/agent/chat/workflow_test_agent/test/!(test_article_creation_content_write.js)"
       # - ".ai_helper/dev/doc/chat/!(reference|usecase)/**"
 input:
   git_clone_to_path: .ai_helper/prompt_builder/git_repo
   instruction: |
     {{#partial }}
     ```yaml
+    path: .ai_helper/dev/context/working_prompt/redesign.md
     # path: .ai_helper/dev/context/working_prompt/refactoring.md
     # path: .ai_helper/dev/context/working_prompt/follow_design_coding.md
-    path: .ai_helper/dev/context/working_prompt/follow_design_detail_coding.md
+    # path: .ai_helper/dev/context/working_prompt/follow_design_detail_coding.md
     render: true
     ```
     {{/partial }}
