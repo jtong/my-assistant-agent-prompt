@@ -23,4 +23,4 @@ render: false
 
 ## 任务
 
-我希望 生成写测试的文档放到规范里
+我希望 getSubThreadByPath 的重复消除掉
