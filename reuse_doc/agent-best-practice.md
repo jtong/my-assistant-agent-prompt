@@ -8,11 +8,11 @@
 - 主线程：用户与Agent的主要对话线程，包含消息列表和设置。
 - 子线程：嵌套在上级线程（也称作父线程）消息元数据中的次级对话线程，用于处理复杂任务。上级线程可以是主线程也可以是其他子线程
 - StateHandler：处理特定状态的组件，负责生成消息内容和执行状态转换。
-- InteractionUnit：子线程中一轮完整对话（bot-user）的处理单元。
+- InteractionUnit：子线程中一轮完整对话（bot-user 或 user-(bot-user) 或 user-bot ）的处理单元。
 - Phase：线程的处理阶段，存储在settings.briefStatus.phase中。
 - Response：Agent和组件返回的响应对象，包含消息内容和元数据。
 
-## 1.1 缩写或
+## 1.1 缩写
 - 主Agent： 直接处理用户输入的顶层Agent，同时也是主线程的Agent的意思
 
 ## 2. Agent 核心接口规范
@@ -21,18 +21,18 @@
 
 ```javascript
 constructor(metadata, settings) {
-    this.metadata = metadata;
-    this.settings = settings;
-    // 初始化LLM客户端
+   this.metadata = metadata;
+   this.settings = settings;
+   // 初始化LLM客户端
 }
 
 async initialize() { // Base Agent已经实现，如果没有特殊的，就可以不自己实现
-    // 设置默认状态
-    this.settings = this.settings || {};
-    this.settings.briefStatus = this.settings.briefStatus || { phase: "initial_phase" };
-    
-    // 初始化阶段处理器
-    await this._initializeStateHandlers();
+   // 设置默认状态
+   this.settings = this.settings || {};
+   this.settings.briefStatus = this.settings.briefStatus || { phase: "initial_phase" };
+
+   // 初始化阶段处理器
+   await this._initializeStateHandlers();
 }
 
 /*
@@ -40,29 +40,29 @@ async initialize() { // Base Agent已经实现，如果没有特殊的，就可�
  * 子类应覆盖此方法以初始化其特定的状态处理器
  */
 async _initializeStateHandlers() {
-    // 子类应实现此方法
-    this.stateHandlers = {
-        initial_phase: new SomeStateHandler({/*...*/})
-    };
+   // 子类应实现此方法
+   this.stateHandlers = {
+      initial_phase: new SomeStateHandler({/*...*/})
+   };
 }
 
 static async create(metadata, settings) { // Base Agent已经实现，如果没有特殊的，就可以不自己实现
-    const agent = new this(metadata, settings);
-    await agent.initialize();
-    return agent;
+   const agent = new this(metadata, settings);
+   await agent.initialize();
+   return agent;
 }
 
 async executeTask(task, thread) {
-    if (task.name === 'chatPair') { // 额外支持的各种task
-        return new Response(task.meta.bot);
-    } else {
-        // 默认使用状态处理流程
-        return this._handleMessageProcessing(task, thread);
-    }
+   if (task.name === 'chatPair') { // 额外支持的各种task
+      return new Response(task.meta.bot);
+   } else {
+      // 默认使用状态处理流程
+      return this._handleMessageProcessing(task, thread);
+   }
 }
 
 async loadOperations(agent) { //主Agent才必须实现，子Agent不需要
-    return [/* 操作列表 */];
+   return [/* 操作列表 */];
 }
 ```
 
@@ -77,14 +77,14 @@ AIAdapter 是统一管理 AI 通信的单例适配器，所有 AI 调用必须�
 ```javascript
 // 在 Agent 构造函数中初始化
 constructor(metadata, settings) {
-    super(metadata, settings);
-    
-    // 初始化 AIAdapter 而非直接创建 AI 客户端
-    const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
-    AIAdapter.initialize(metadata, settings);
-    
-    // 不再需要: this.openai = new OpenAI(...);
-    // 不再需要: this.model = model;
+   super(metadata, settings);
+
+   // 初始化 AIAdapter 而非直接创建 AI 客户端
+   const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
+   AIAdapter.initialize(metadata, settings);
+
+   // 不再需要: this.openai = new OpenAI(...);
+   // 不再需要: this.model = model;
 }
 ```
 
@@ -118,6 +118,8 @@ return response;
    - 规则1：Agent、StateHandler 和 InteractionUnit 之间必须始终传递主对话线程，而非子对话线程。
    - 规则2：子对话线程路径信息必须通过 task.meta.subThreadPath 属性传递。
    - 规则3：禁止将提取出的子对话线程作为唯一线程参数传递给其他组件。
+   - 规则4：InteractionUnit的Starter和Responsor必须遵循相同的线程传递规则，不得直接操作子线程。
+     规则5：子线程路径必须使用统一格式，优先使用字符串形式："messages.{索引}.meta._thread"。只有在特殊情况下才使用对象形式：{messageIndex: 索引, metaPath: "meta._thread"}。
 
 2. 子对话线程访问机制
    ```javascript
@@ -137,7 +139,7 @@ return response;
 
 ```javascript
 
-/**
+/
  * 根据路径获取子线程
  * @param {Object} thread - 主线程对象
  * @param {string|Object} path - 子线程路径，支持两种格式：
@@ -263,9 +265,19 @@ _applyPhaseUpdateSuggestion(task, thread) {
 
 3. InteractionUnit 职责：
    - 分步持久化bot和user消息：
-     - 先持久化bot消息
-     - 再持久化user消息
+      - Responsor负责生成和持久化bot-user消息对
+      - Starter负责生成和持久化初始user消息
+      - 先持久化bot消息
+      - 再持久化user消息
    - 每次添加消息后立即调用`threadRepository.saveThread()`
+
+持久化责任链：
+- 组件负责持久化自己生成或修改的内容
+- Agent负责委托StateHandler处理任务，不直接持久化
+- StateHandler负责持久化状态变更和子线程创建
+- Responsor负责持久化完整的bot-user消息对
+- Starter负责持久化初始user消息
+
 
 ### 5.3 必须持久化的关键时机点
 
@@ -282,31 +294,9 @@ _applyPhaseUpdateSuggestion(task, thread) {
    task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
    ```
 
-3. 生成bot消息后立即持久化（InteractionUnit中）：
+3. Starter生成初始user消息后：
    ```javascript
-   // 1. 委托StateHandler生成bot消息
-   const response = await this.stateHandler.handle(task, thread, agent);
-   const botMessageText = response.getFullMessage();
-   
-   // 2. 创建bot消息对象
-   const botMessage = {
-       id: `sub_bot_${Date.now()}`,
-       sender: "bot",
-       text: botMessageText,
-       timestamp: Date.now()
-   };
-   
-   // 3. 添加到子线程并立即持久化
-   subThread.messages.push(botMessage);
-   task.host_utils.threadRepository.saveThread(thread);
-   ```
-
-4. 生成user消息后立即持久化（InteractionUnit中）：
-   ```javascript
-   // 1. 处理指令并生成user反馈
-   const userMessageText = await this.generateUserMessage(botMessage, task, thread, agent);
-   
-   // 2. 创建user消息对象
+   // 创建user消息对象
    const userMessage = {
        id: `sub_user_${Date.now()}`,
        sender: "user",
@@ -314,11 +304,41 @@ _applyPhaseUpdateSuggestion(task, thread) {
        timestamp: Date.now()
    };
    
-   // 3. 添加到子线程并立即持久化
+   // 添加到子线程并立即持久化
    subThread.messages.push(userMessage);
    task.host_utils.threadRepository.saveThread(thread);
    ```
 
+4. Responsor生成bot消息后：
+   ```javascript
+   // 创建bot消息对象
+   const botMessageText = response.getFullMessage();
+   const botMessage = {
+       id: `sub_bot_${Date.now()}`,
+       sender: "bot",
+       text: botMessageText,
+       timestamp: Date.now()
+   };
+   
+   // 添加到子线程并立即持久化
+   subThread.messages.push(botMessage);
+   task.host_utils.threadRepository.saveThread(thread);
+   ```
+
+5. Responsor生成user消息后：
+   ```javascript
+   // 创建user消息对象
+   const userMessage = {
+       id: `sub_user_${Date.now()}`,
+       sender: "user",
+       text: userMessageText,
+       timestamp: Date.now()
+   };
+   
+   // 添加到子线程并立即持久化
+   subThread.messages.push(userMessage);
+   task.host_utils.threadRepository.saveThread(thread);
+   ```
 
 ### 5.4 持久化方法选择标准
 
@@ -368,23 +388,25 @@ const response = new Response("生成的内容");
 - InteractionUnit 调用相关函数生成 user message 后，再存到对应的子 thread 中，并立即持久化（这里没有使用Response）
 - StateHandler 接到 子 thread 的 Agent 返回的 Response 后，直接返回，由持有自己的 InteractionUnit 或 Agent 持久化 Response 对应的 message。
 
-
 ### 6.3 跳过Bot消息创建机制
 
-在某些情况下，StateHandler 可能需要直接更新已经存在的消息，而不是创建新的消息。例如，当StateHandler 已经创建并更新了一个占位消息时，可以使用 `skipBotMessageCreation` 标志告知 InteractionUnit 跳过创建新的bot消息：
+在某些情况下，StateHandler 可能需要直接更新已经存在的消息，而不是创建新的消息。例如，当StateHandler 已经创建并更新了一个占位消息时，可以使用 `skipBotMessageCreation` 标志告知 Responsor 跳过创建新的bot消息：
 
 ```javascript
 // 在StateHandler中
 // 直接更新了已有消息后
 const response = new Response(finalContent);
-response.setMeta({ skipBotMessageCreation: true });
+response.meta = { 
+    ...response.meta,
+    skipBotMessageCreation: true 
+};
 return response;
 ```
 
-InteractionUnit 在执行过程中会检查 Response 的 meta 中是否包含 `skipBotMessageCreation` 标志：
+Responsor 在执行过程中会检查 Response 的 meta 中是否包含 `skipBotMessageCreation` 标志：
 
 ```javascript
-// 在InteractionUnit的execute方法中
+// 在Responsor的execute方法中
 if (response.meta && response.meta.skipBotMessageCreation) {
     // 不创建新消息，而是使用子线程中已有的最后一条bot消息
     const botMessages = subThread.messages.filter(msg => msg.sender === "bot");
@@ -397,7 +419,6 @@ if (response.meta && response.meta.skipBotMessageCreation) {
 
 这种机制特别适用于需要显示进度的场景，如初始显示"正在生成..."，然后更新为最终结果的情况。
 
-
 ## 7. 子线程交互模型
 
 ### 7.1 概述与核心理念
@@ -406,10 +427,10 @@ if (response.meta && response.meta.skipBotMessageCreation) {
 
 核心理念:
 
-- **完整性**: 处理需要多步骤才能完成的复杂任务
-- **封装性**: 将复杂处理过程封装在子线程中，不影响主线程
-- **自动化**: 系统自动执行一系列步骤，无需用户干预
-- **高质量**: 通过多步骤反思和改进，提升最终输出质量
+- 完整性: 处理需要多步骤才能完成的复杂任务
+- 封装性: 将复杂处理过程封装在子线程中，不影响主线程
+- 自动化: 系统自动执行一系列步骤，无需用户干预
+- 高质量: 通过多步骤反思和改进，提升最终输出质量
 
 ### 7.2 架构设计
 
@@ -430,8 +451,8 @@ if (response.meta && response.meta.skipBotMessageCreation) {
 
 子线程交互模型中有两类核心组件：
 
-1. **StateHandler**: 负责生成bot消息内容，专注于特定状态的处理逻辑
-2. **InteractionUnit**: 负责处理完整的交互流程，包括bot消息生成和user消息的生成
+1. StateHandler: 负责生成bot消息内容，专注于特定状态的处理逻辑
+2. InteractionUnit: 负责处理完整的交互流程，包括bot消息生成和user消息的生成
 
 这两个组件是同一抽象层次的概念，分别负责不同的职责域：
 - StateHandler专注于内容生成
@@ -441,13 +462,13 @@ if (response.meta && response.meta.skipBotMessageCreation) {
 
 InteractionUnit有两个子类，用于处理不同的交互场景：
 
-1. **Responsor - 响应处理器**:
+1. Responsor - 响应处理器:
    - 职责：对AI生成的结果进行反馈并引导AI继续进行后续任务
    - 流程：委托StateHandler生成bot消息 → 分析bot结果 → 生成user反馈引导后续任务
    - 场景：适用于需要对AI输出进行评估、反馈并引导其进行下一步工作的情况
    - 特点：必须持有一个StateHandler来生成bot消息
 
-2. **Starter - 启动器**:
+2. Starter - 启动器:
    - 职责：启动新的交互流程，以user消息开始
    - 流程：生成初始user消息 → 委托后续组件处理响应
    - 场景：适用于需要主动发起对话或提问的情况
@@ -527,7 +548,7 @@ StateHandler 与 Responsor 的关系：
 
 #### 7.4.3 Starter 关键函数
 
-1. **execute(task, thread, agent)**
+1. execute(task, thread, agent)
    - 功能：启动一个新的交互流程
    - 参数：
       - task: 当前任务对象
@@ -540,7 +561,7 @@ StateHandler 与 Responsor 的关系：
       - 根据持有的组件类型(Responsor或StateHandler)处理后续流程
       - 建议状态更新并返回结果
 
-2. **generateInitialUserMessage(task, thread, agent)**
+2. generateInitialUserMessage(task, thread, agent)
    - 功能：生成启动交互流程的初始user消息
    - 参数：
       - task: 当前任务对象
@@ -646,25 +667,27 @@ async _initializeInteractionUnits() {
 
 ### 7.8 最佳实践
 
-1. **选择合适的交互单元类型**:
+1. 选择合适的交互单元类型:
    - 使用Starter：当需要以用户消息主动发起对话流程时
    - 使用Responsor：当需要对AI输出进行反馈并引导后续任务时
 
-2. **Starter持有组件的选择**:
-   - 优先持有Responsor：当需要完整的多轮对话时（推荐方式）
-   - 少数情况持有StateHandler：当只需要简单的单次响应时
+2. Starter持有组件的选择:
+   - **优先持有Responsor**：当需要完整的多轮对话时（推荐方式）
+      - 适用场景：需要多轮交互精炼结果
+      - 适用场景：需要针对AI输出进行反馈和引导
+   - **少数情况持有StateHandler**：当只需要简单的单次响应时
+      - 适用场景：只需要一次性生成内容，不需要后续反馈
+      - 适用场景：初始化配置或简单查询
 
-3. **状态流转设计**:
+3. 状态流转设计:
    - Starter通常对应流程的初始阶段
    - Responsor通常用于中间和最终阶段
    - 确保状态流转路径覆盖所有可能的情况
 
-4. **消息持久化时机**:
+4. 消息持久化时机:
    - Starter生成初始user消息后立即持久化
    - 所有交互单元在生成或修改消息后立即持久化
    - 状态更新前确保所有消息已持久化
-
-
 
 ## 8. 主线程与子线程交互机制
 
@@ -849,13 +872,20 @@ class NestedSubThreadStateHandler extends StateHandler {
 
 ## 9. 子线程初始化模式
 
-子线程Agent初始化过程需要为每个 InteractionUnit 提供对应的 StateHandler ：
+子线程Agent初始化流程必须遵循以下顺序：
+
+1. 首先初始化所有需要的StateHandler实例
+2. 然后使用这些StateHandler初始化相应的Responsor实例
+3. 最后根据需要初始化Starter实例（通常持有Responsor）
+4. 将所有交互单元（Starter和Responsor）按阶段配置到interactionUnits对象中
+
+这种初始化顺序确保了组件之间的依赖关系正确建立，具体参考如下：
 
 ```javascript
 class MySubThreadAgent extends SubThreadAgent {
     /*
      * 初始化交互单元
-     * 为每个InteractionUnit提供对应的StateHandler
+     * 为每个阶段提供对应的InteractionUnit (Starter或Responsor)
      */
     async _initializeInteractionUnits() {
         // 首先初始化所有需要的状态处理器
@@ -879,31 +909,25 @@ class MySubThreadAgent extends SubThreadAgent {
             nextPhase: "completed"
         });
         
-        // 然后初始化交互单元，并为每个单元提供对应的状态处理器
+        // 然后初始化Responsor交互单元
+        const dataTransformationResponsor = await DataTransformationResponsor.create({
+            phase: "data_transformation",
+            nextPhase: "data_analysis",
+            stateHandler: dataTransformationHandler
+        });
+        
+        // 配置交互单元，注意Starter优先持有Responsor
         this.interactionUnits = {
-            initial_phase: await DataPreparationUnit.create({
+            // 使用Starter启动流程，优先持有Responsor
+            initial_phase: await DataPreparationStarter.create({
                 phase: "initial_phase",
                 nextPhase: "data_transformation",
-                stateHandler: dataPreparationHandler
+                responsor: dataTransformationResponsor  // 优先使用Responsor
             }),
             
-            data_transformation: await DataTransformationUnit.create({
-                phase: "data_transformation",
-                nextPhase: "data_analysis",
-                stateHandler: dataTransformationHandler
-            }),
-            
-            data_analysis: await DataAnalysisUnit.create({
-                phase: "data_analysis",
-                nextPhase: "result_formatting",
-                stateHandler: dataAnalysisHandler
-            }),
-            
-            result_formatting: await ResultFormattingUnit.create({
-                phase: "result_formatting",
-                nextPhase: "completed",
-                stateHandler: resultFormattingHandler
-            })
+            // 其他阶段使用Responsor处理
+            data_transformation: dataTransformationResponsor,
+            // ...其他阶段的交互单元
         };
     }
 }
@@ -945,28 +969,30 @@ class MySubThreadAgent extends SubThreadAgent {
 - 文件命名：必须使用 `[业务名称]Agent.js` 格式
 - 类命名：必须使用 `[业务名称]Agent` 格式，例如：`ArticleCreationAgent`、`CodeReviewAgent`
 - 业务性：类名必须明确体现业务功能，不应仅反映技术角色
-  - 正确：`DataAnalysisAgent`、`CodeGenerationAgent`
-  - 错误：`SubThreadAgent`（仅反映技术角色，不体现业务）、`ProcessAgent`（过于抽象）
+   - 正确：`DataAnalysisAgent`、`CodeGenerationAgent`
+   - 错误：`SubThreadAgent`（仅反映技术角色，不体现业务）、`ProcessAgent`（过于抽象）
 
 #### 10.2.2 状态处理器命名规范
 
 - 文件命名：必须使用 `[对应Agent前缀]StateHandlers.js` 格式
 - 类命名：必须使用 `[业务阶段名称]Handler` 格式
-  - 例如：`RequirementClarificationHandler`、`CodeGenerationHandler`
+   - 例如：`RequirementClarificationHandler`、`CodeGenerationHandler`
 - 独立性：每个子线程的状态处理器必须放置在各自的文件中，不应将不同层级的处理器混合在一个文件中
 
 #### 10.2.3 交互单元命名规范
 
 - 文件命名：必须使用 `[对应Agent前缀]InteractionUnits.js` 格式
-- 类命名：必须使用 `[业务功能]Unit` 格式，直接反映其业务功能
-  - 例如：`DataTransformationUnit`、`CodeRefactoringUnit`
+- 类命名：
+   - Responsor类必须使用 `[业务功能]Responsor` 格式
+   - Starter类必须使用 `[业务功能]Starter` 格式
+   - 例如：`DataTransformationResponsor`、`InitialQueryStarter`
 - 禁止通用命名：避免使用泛化的名称（如 `ProcessingUnit`），必须具体反映业务功能
 
 #### 10.2.4 状态名称规范
 
 - 格式：必须使用小写下划线格式（snake_case）
 - 命名方式：应使用动名词组合，反映当前阶段的主要动作
-  - 例如：`data_preparation`、`code_generation`、`requirement_analysis`
+   - 例如：`data_preparation`、`code_generation`、`requirement_analysis`
 - 默认状态：初始状态通常命名为 `initial_phase` 或特定的初始业务阶段
 - 终止状态：完成状态统一命名为 `completed`
 
@@ -985,12 +1011,30 @@ class MySubThreadAgent extends SubThreadAgent {
 4. 不一致的缩写：在不同位置对同一概念使用不同的缩写
 5. 未定义的缩写：使用未在项目文档中明确定义的缩写
 
+#### 10.2.7 交互单元组织规范
+
+1. 组件分离原则：
+   - 每个子线程的InteractionUnit类（Starter和Responsor）必须集中在一个文件中
+   - 文件命名为 `[BusinessProcess]InteractionUnits.js`
+   - 禁止将不同子线程的InteractionUnit混合在同一文件中
+
+2. 类型明确性：
+   - 所有Starter类必须明确继承自Starter基类
+   - 所有Responsor类必须明确继承自Responsor基类
+   - 禁止使用泛化的InteractionUnit作为直接父类
+
+3. 持有关系规范：
+   - Responsor必须持有一个StateHandler
+   - Starter应优先持有一个Responsor
+   - 只有在简单场景下，Starter才可以直接持有StateHandler
+
 ### 10.3 复用要求
 
-- 所有的 StateHandler 子类都要继承 StateHandler，而不是自己搞一个父类
+- 所有的StateHandler子类都要继承StateHandler，而不是自己搞一个父类
 - 主线程Agent继承BaseAgent，子线程Agent继承SubThreadAgent
-- _applyPhaseUpdateSuggestion 和 初始化 briefStatus 都用同样的代码，这代码要在BaseAgent里
-- 所有InteractionUnit都应继承基本的 InteractionUnit 类
+- _applyPhaseUpdateSuggestion和初始化briefStatus都用同样的代码，这代码要在BaseAgent里
+- 所有Responsor类必须继承Responsor基类
+- 所有Starter类必须继承Starter基类
 - 共用逻辑应提取到基类或工具函数中
 
 ## 11. 最佳实践总结
@@ -1001,7 +1045,8 @@ class MySubThreadAgent extends SubThreadAgent {
    - 主线程Agent继承BaseAgent，负责主要交互
    - 子线程Agent继承SubThreadAgent，负责子线程交互流程管理
    - StateHandler专注于生成bot消息
-   - InteractionUnit持有StateHandler并专注于处理bot消息指令和生成user反馈
+   - Responsor持有StateHandler并专注于处理bot消息指令和生成user反馈
+   - Starter负责启动交互流程，生成初始user消息并委托后续处理
    - 每个组件只关注自己的责任范围
 
 2. 状态驱动:
@@ -1041,13 +1086,16 @@ class MySubThreadAgent extends SubThreadAgent {
 3. 子线程交互模型：
    - 主线程Agent继承BaseAgent
    - 子线程Agent继承SubThreadAgent
-   - InteractionUnit持有对应的StateHandler
+   - Responsor持有对应的StateHandler生成bot消息并处理反馈
+   - Starter负责生成初始user消息，优先委托Responsor进行后续处理
    - StateHandler负责生成bot消息内容
-   - InteractionUnit处理bot指令并生成user反馈
+   - 交互单元协作模式：Starter启动流程 → Responsor处理中间交互 → 最终Responsor完成处理
    - 多轮交互完成后汇总结果返回给主线程
 
 4. 持久化最佳实践：
    - 分层持久化责任模型明确各组件职责
+   - Starter负责持久化初始user消息
+   - Responsor负责持久化bot-user消息对
    - 调试支持的检查点机制记录处理状态
    - 根据组件职责范围限定其持久化权限
 
@@ -1058,7 +1106,7 @@ class MySubThreadAgent extends SubThreadAgent {
 
 6. 子线程结构管理：
    - 子线程创建使用两阶段处理（准备和执行）
-   - 嵌套子线程通过路径链构建完整访问路径 
+   - 嵌套子线程通过路径链构建完整访问路径
    - 占位符消息标准管理流程
 
 7. 代码组织原则：

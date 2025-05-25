@@ -14,6 +14,7 @@
 - 给所有的AI对话建立一个基于Thread的adapter，方便查看日志
 - 加入了测试，而且可以基于任务部分状态测试，就是测试数据准备还是比较麻烦
 - 改了设计，把InteractionUnit分成Starter和Responser，一个先发消息，一个后发消息，而且Starter可能直接就包着一个Responser
+- 把把InteractionUnit分成Starter和Responser后，改文档的时间超出了我的预期，这说明我们需要一个修改文档的文档
 
 TODO：
 - 然后拿着生成的数据，说哪一条要加入RAG
