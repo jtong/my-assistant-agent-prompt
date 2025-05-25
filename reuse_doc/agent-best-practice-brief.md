@@ -1,264 +1,366 @@
 
-# My Assistant Agent 开发规范简明指南
+# My Assistant Agent 简化设计规范
 
-## 1. 核心概念与关系
+## 1. 核心概念
 
-- 主线程: 用户与Agent的主对话线程
-- 子线程: 嵌套在消息元数据中的次级对话线程，存储在`message.meta._thread`
-- 状态(Phase): 处理阶段，存储在`settings.briefStatus.phase`
-- StateHandler: 处理特定状态的组件，生成消息内容
-- InteractionUnit: 子线程中一轮完整对话处理单元，持有并委托StateHandler
+- 主线程：用户与Agent的主要对话线程，包含消息列表和设置
+- 子线程：嵌套在父线程消息元数据中的次级对话线程，用于处理复杂任务
+- StateHandler：处理特定状态的组件，负责生成消息内容和执行状态转换
+- InteractionUnit：子线程中一轮完整对话的处理单元，包括Responsor、Starter和Requester
+- Phase：线程的处理阶段，存储在`settings.briefStatus.phase`中
 
-核心关系:
-- 每个Agent拥有多个StateHandler（每个状态一个）
-- 每个SubThreadAgent拥有多个InteractionUnit（每个状态一个）
-- 每个InteractionUnit持有一个专属的StateHandler实例
+## 2. 类继承与持有关系
 
-## 2. 类的职责与继承体系
+### 2.1 继承关系
 
-### 2.1 Agent 类族
-- BaseAgent: 所有主线程Agent的基类
-    - 负责状态处理和任务路由
-    - 必须使用其`_handleMessageProcessing`和`_applyPhaseUpdateSuggestion`方法
+```
+BaseAgent <- 主线程Agent
+SubThreadAgent <- 子线程Agent
+StateHandler <- 具体状态处理器
+InteractionUnit <- Responsor/Starter/Requester
+```
 
-- SubThreadAgent: 所有子线程Agent的基类
-    - 管理子线程交互单元执行
-    - 不得修改其`_executeInteractionUnits`方法
+### 2.2 持有关系（关键）
 
-### 2.2 处理器类族
-- StateHandler: 所有状态处理器的基类
-    - 实现`handle(task, thread, agent)`方法处理特定状态
-    - 使用`_suggestPhaseUpdate`提出状态转换建议
+- 主线程Agent 持有多个 StateHandler
+- 子线程Agent 持有多个 InteractionUnit
+- Responsor 必须持有 StateHandler
+- Starter 只能持有 Responsor
+- Requester 只能持有 StateHandler
 
-- InteractionUnit: 交互单元基类
-    - 实现`execute(task, thread, agent)`协调bot-user交互
-    - 实现`generateUserMessage`处理bot指令生成用户反馈
-    - 必须持有对应的StateHandler实例
+![持有关系示意图](https://example.com/diagram.svg)
 
-### 2.3 AIAdapter 通信规范
+```
+BaseAgent (主线程Agent基类)
+    ↓
+主线程Agent → StateHandler (多个，处理不同状态)
+                  ↓
+              SubThreadAgent (子线程Agent基类)
+                  ↓
+              子线程Agent → InteractionUnit (多个，处理不同阶段)
+                          ↙                 ↓                         ↘
+                  Starter → Responsor     Requester → StateHandler    Responsor → StateHandler
+```
 
+## 3. 线程传递与访问规范
 
-- 目的：所有 AI 调用统一通过 Adapter 接口进行，避免各种 AI 服务的 API 和数据结构直接入侵代码，降低对特定 AI 服务的依赖
-- 规则：适配器只发送第一层消息，自动排除子线程和虚拟消息，并处理格式转换，接口是thread的messages属性的数据。
+### 3.1 核心原则
+
+- 必须始终传递主线程对象，而非子线程对象
+- 子线程路径通过 `task.meta.subThreadPath` 属性传递
+- 子线程路径格式: `"messages.{索引}.meta._thread"`
+- 严禁将提取的子线程作为参数传递给其他组件
+
+### 3.2 子线程访问
 
 ```javascript
-// 在 Agent 构造函数中初始化
-constructor(metadata, settings) {
-    super(metadata, settings);
-    
-    // 初始化 AIAdapter 而非直接创建 AI 客户端
-    const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
-    AIAdapter.initialize(metadata, settings);
-    
-    // 不再需要: this.openai = new OpenAI(...);
-    // 不再需要: this.model = model;
+// 正确方式
+function someMethod(task, thread, agent) {
+  const subThreadPath = task.meta.subThreadPath;
+  const subThread = getSubThreadByPath(thread, subThreadPath);
+  // 处理子线程...
+}
+
+// 错误方式 - 不要直接传递子线程
+function wrongMethod(subThread, agent) { /* ... */ }
+```
+
+## 4. 状态管理机制
+
+### 4.1 状态存储与更新
+
+- 状态存储在 `settings.briefStatus.phase`
+- 状态更新使用建议-应用两步机制
+- 状态更新建议存储在 `_phaseUpdateSuggestion`
+
+### 4.2 状态处理流程
+
+```javascript
+// 状态处理器建议状态更新
+_suggestPhaseUpdate(task, thread) {
+  const currentSettings = task.host_utils.threadRepository.getThreadSettings(thread.id) || {};
+  const updatedSettings = {
+    ...currentSettings,
+    _phaseUpdateSuggestion: { phase: this.nextPhase }
+  };
+  task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
+}
+
+// Agent应用状态更新建议
+_applyPhaseUpdateSuggestion(task, thread) {
+  const currentSettings = task.host_utils.threadRepository.getThreadSettings(thread.id) || {};
+  if (currentSettings._phaseUpdateSuggestion) {
+    // 跳过retry任务的状态更新
+    if (task.meta._ui_action === 'retry') {
+      const updatedSettings = { ...currentSettings };
+      delete updatedSettings._phaseUpdateSuggestion;
+      task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
+    } else {
+      // 更新内存中的状态
+      this.settings.briefStatus.phase = currentSettings._phaseUpdateSuggestion.phase;
+      // 更新线程设置并移除建议
+      const updatedSettings = {
+        ...currentSettings,
+        briefStatus: this.settings.briefStatus
+      };
+      delete updatedSettings._phaseUpdateSuggestion;
+      task.host_utils.threadRepository.updateThreadSettings(thread, updatedSettings);
+    }
+  }
 }
 ```
 
-- 使用：在需要调用 AI 时，调用 AIAdapter 而非直接调用 AI 服务
+## 5. 交互单元职责与执行流程
+
+### 5.1 三种交互单元
+
+- Responsor: 处理bot-user交互对，必须持有StateHandler
+- Starter: 启动交互流程，只能持有Responsor
+- Requester: 处理简单的单次请求-响应，只能持有StateHandler
+
+### 5.2 执行流程
+
+- Responsor流程: StateHandler生成bot消息 → 分析bot结果 → 生成user反馈
+- Starter流程: 生成初始user消息 → 委托Responsor处理
+- Requester流程: 生成初始user消息 → StateHandler生成bot响应
+
+## 6. 持久化机制
+
+### 6.1 持久化职责分配
+
+- InteractionUnit: 负责bot和user消息的持久化
+- StateHandler: 负责状态变更和子线程创建的持久化
+- Agent: 负责委托StateHandler处理任务，不直接持久化
+
+### 6.2 关键持久化时机
+
+- 子线程创建后
+- 消息添加到子线程后
+- 状态更新建议添加后
+- 复杂操作完成后
 
 ```javascript
-const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
-
-// 消息准备工作由调用者负责
-const messages = thread.messages.filter(msg => !msg.isVirtual); // 只是举例，具体构造messages的逻辑根据场景生成，但注意保证无副作用
-
-// 使用适配器调用 AI
-const stream = await AIAdapter.chat(messages, { //注意，这里的messages是thread的messsages属性的数据结构，要严格使用该数据结构的数据
-   systemMessage: "你是一个助手",
-   stream: true
+// 创建子线程后持久化
+lastMessage.meta._thread = subThread;
+task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
+  meta: lastMessage.meta
 });
 
-// 创建响应对象
-const response = new Response('');
-response.setStream(agent.createStream(stream));
+// 添加消息后持久化
+subThread.messages.push(newMessage);
+task.host_utils.threadRepository.saveThread(thread);
+```
 
+### 6.3 跳过Bot消息创建机制
+
+在某些情况下，StateHandler 可能需要直接更新已经存在的消息，而不是创建新的消息：
+
+```javascript
+// 在StateHandler中
+const response = new Response(finalContent);
+response.meta = { 
+  ...response.meta,
+  skipBotMessageCreation: true 
+};
 return response;
 ```
+## 7. 子线程初始化模式
 
+### 7.1 主线程创建子线程（两步法）
 
-## 3. 线程管理关键规则
+1. 准备阶段: 创建占位消息（UI展示）
+2. 执行阶段: 创建实际子线程并处理
 
-### 3.1 线程传递原则
-- 必须始终传递主线程对象，通过路径访问子线程
-- 子线程路径通过`task.meta.subThreadPath`属性传递
-- 严禁将提取的子线程作为参数传递给其他组件
-
-### 3.2 子线程访问标准方法
 ```javascript
-// 标准子线程访问方式
-const subThreadPath = task.meta.subThreadPath;
-const subThread = getSubThreadByPath(thread, subThreadPath);
-// 然后操作子线程...
-```
-
-## 4. 主线程创建子线程的两阶段流程
-
-### 4.1 准备阶段（UI优先）
-```javascript
-// PrepareSubThreadHandler
-async handle(task, thread, agent) {
+// 准备阶段 - 创建占位消息
+class SubThreadPreparationHandler extends StateHandler {
+  async handle(task, thread, agent) {
     // 1. 创建占位消息
-    const placeholderMessage = "正在处理...";
+    const placeholderMessage = "正在处理您的请求...";
     const response = new Response(placeholderMessage);
     
-    // 2. 添加下一任务（跳过用户输入）
+    // 2. 设置下一任务，但仍然在同一个主Agent内处理
     response.addNextTask(new Task({
-        name: "ContinueProcessing",
-        type: Task.TYPE_ACTION,
-        skipUserMessage: true,
-        meta: { originalQuery: task.message?.text }
+      name: "ContinueProcessing", // 任务名不重要，状态才重要
+      type: Task.TYPE_ACTION,
+      skipUserMessage: true,
+      message: "继续处理",
+      meta: { originalQuery: task.message?.text }
     }));
     
     // 3. 建议状态更新
     this._suggestPhaseUpdate(task, thread);
-    
     return response;
+  }
 }
-```
 
-### 4.2 执行阶段（创建并处理子线程）
-```javascript
-// ExecuteSubThreadHandler
-async handle(task, thread, agent) {
+// 执行阶段 - 创建和处理子线程
+class SubThreadExecutionHandler extends StateHandler {
+  async handle(task, thread, agent) {
     // 1. 创建子线程
-    const subThread = { messages: [], settings: { briefStatus: { phase: "initial_phase" } } };
+    const subThread = { 
+      messages: [], 
+      settings: { briefStatus: { phase: "initial_phase" } } 
+    };
     
-    // 2. 存储在占位消息的元数据中
+    // 2. 获取最后一条消息(前面状态生成的占位符)
     const lastMessageIndex = thread.messages.length - 1;
     const lastMessage = thread.messages[lastMessageIndex];
+    
+    // 3. 将子线程存储在占位消息的元数据中
     if (!lastMessage.meta) lastMessage.meta = {};
     lastMessage.meta._thread = subThread;
     
-    // 3. 持久化更新（关键步骤）
+    // 4. 持久化更新的消息(重要!)
     task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
-        meta: lastMessage.meta
+      meta: lastMessage.meta
     });
     
-    // 4. 创建子线程Agent并执行
+    // 5. 创建子线程Agent
     const subThreadAgent = await MySubThreadAgent.create(agent.metadata, agent.settings);
+    
+    // 6. 创建包含子线程路径的任务
     const subThreadTask = new Task({
-        name: "ProcessSubThread",
-        meta: { subThreadPath: `messages.${lastMessageIndex}.meta._thread` },
-        host_utils: task.host_utils
+      name: "ProcessSubThread",
+      type: Task.TYPE_ACTION,
+      message: "处理子线程",
+      meta: {
+        // 记录子线程在主线程中的路径
+        subThreadPath: `messages.${lastMessageIndex}.meta._thread`,
+        originalTask: task.meta.originalQuery
+      },
+      host_utils: task.host_utils
     });
     
-    // 5. 执行子线程处理
+    // 7. 执行子线程处理并获取结果
     const subThreadResponse = await subThreadAgent.executeTask(subThreadTask, thread);
     
-    // 6. 更新占位消息为最终结果
-    lastMessage.text = subThreadResponse.getFullMessage();
-    task.host_utils.threadRepository.updateMessage(thread, lastMessage.id, {
-        text: lastMessage.text
-    });
+    // 8. 处理完成，建议状态更新
+    if (this.nextPhase) {
+      this._suggestPhaseUpdate(task, thread);
+    }
     
-    // 7. 建议状态更新
-    this._suggestPhaseUpdate(task, thread);
-    
-    return new Response("");
+    // 9. 返回响应(已直接更新线程消息)
+    return subThreadResponse;
+  }
 }
 ```
 
-## 5. 子线程Agent初始化标准模式
+### 7.2 子线程Agent初始化
 
 ```javascript
-// 子线程Agent中必须实现的方法
-async _initializeInteractionUnits() {
-    // 1. 先创建所有StateHandler实例
-    const initialPhaseHandler = await InitialPhaseHandler.create({
-        phase: "initial_phase",
-        nextPhase: "next_phase"
+class MySubThreadAgent extends SubThreadAgent {
+  async _initializeInteractionUnits() {
+    // 1. 先初始化所有StateHandler
+    const handler1 = await StateHandler1.create({/*...*/});
+    const handler2 = await StateHandler2.create({/*...*/});
+    
+    // 2. 再初始化Responsor
+    const responsor = await MyResponsor.create({
+      stateHandler: handler2
     });
     
-    const nextPhaseHandler = await NextPhaseHandler.create({
-        phase: "next_phase",
-        nextPhase: "completed"
-    });
-    
-    // 2. 然后创建InteractionUnit并传入对应的StateHandler
+    // 3. 最后配置交互单元
     this.interactionUnits = {
-        initial_phase: await InitialPhaseUnit.create({
-            phase: "initial_phase",
-            nextPhase: "next_phase",
-            stateHandler: initialPhaseHandler // 注意这里传入了handler实例
-        }),
-        
-        next_phase: await NextPhaseUnit.create({
-            phase: "next_phase",
-            nextPhase: "completed",
-            stateHandler: nextPhaseHandler // 注意这里传入了handler实例
-        })
+      initial_phase: await MyStarter.create({
+        responsor: responsor  // Starter只能持有Responsor
+      }),
+      second_phase: responsor,
+      third_phase: await MyRequester.create({
+        stateHandler: handler1  // Requester只能持有StateHandler
+      })
     };
+  }
 }
 ```
 
-## 6. 持久化关键时机
+## 8. LLM调用规范
 
-### 6.1 必须立即持久化的时机
-1. 创建子线程后：使用`updateMessage`更新元数据
-2. 添加子线程消息后：使用`saveThread`保存整个线程
-3. 状态更新建议后：使用`updateThreadSettings`保存设置
-4. 更新占位消息内容后：使用`updateMessage`更新文本
+### 8.1 使用AIAdapter
 
-### 6.2 嵌套结构持久化规则
-- 任何子线程修改后，必须持久化最外层主线程
-- 即使修改多层嵌套的子线程，也是调用一次`saveThread(thread)`
+```javascript
+// 正确方式 - 使用AIAdapter
+const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
+const stream = await AIAdapter.chat(thread.messages, {
+  systemMessage: "你是一个助手",
+  stream: true
+});
 
-### 6.3 跳过Bot消息创建机制
-- 在某些情况下，StateHandler 可能需要直接更新已经存在的消息，而不是创建新的消息。例如，当StateHandler 已经创建并更新了一个占位消息时，可以使用 `skipBotMessageCreation` 标志告知 InteractionUnit 跳过创建新的bot消息。
-- InteractionUnit 在执行过程中会检查 Response 的 meta 中是否包含 `skipBotMessageCreation` 标志，如果存在则不创建新的bot消息，而是使用子线程中已有的最后一条bot消息。
-- 这种机制特别适用于需要显示进度的场景，如初始显示"正在生成..."，然后更新为最终结果的情况。
-
-## 7. 文件结构与命名规范
-
-### 7.1 标准目录结构
+// 错误方式 - 直接调用LLM API
+const response = await openai.chat.completions.create({/*...*/});
 ```
-- [Business]Agent.js                    // 主Agent
-- [Business]StateHandlers.js            // 主Agent状态处理器
-- /[business_process]/                  // 子线程目录
-  - [BusinessProcess]Agent.js           // 子线程Agent
-  - [BusinessProcess]StateHandlers.js   // 子线程状态处理器
+
+## 9. 命名与文件组织
+
+### 9.1 文件结构
+
+```
+- [Business]Agent.js                  // 主Agent
+- [Business]StateHandlers.js          // 主Agent状态处理器
+- /[business_process]/                // 子线程目录
+  - [BusinessProcess]Agent.js         // 子线程Agent
   - [BusinessProcess]InteractionUnits.js // 子线程交互单元
-  - /[nested_task]/                     // 嵌套子线程目录
-    - [NestedTask]Agent.js              // 嵌套子线程Agent
-    - [NestedTask]StateHandlers.js
-    - [NestedTask]InteractionUnits.js
+  - [BusinessProcess]StateHandlers.js    // 子线程状态处理器
+  - /[nested_task]/                      // 嵌套子线程目录
+    - [NestedTask]Agent.js               // 嵌套子线程Agent
+    - [NestedTask]InteractionUnits.js    // 嵌套子线程交互单元
+    - [NestedTask]StateHandlers.js       // 嵌套子线程状态处理器
+- /prompt/                               // 提示词目录
+  - [phase_name]_system_prompt.md        // 阶段提示词
 ```
 
-### 7.2 命名规则
-- Agent类: `[业务名称]Agent` (如`ArticleCreationAgent`)
-- StateHandler类: `[状态名称]Handler` (如`RequirementClarificationHandler`)
-- InteractionUnit类: `[状态名称]Unit` (如`OutlineGenerationUnit`)
-- 状态名称: 使用snake_case (如`initial_phase`, `content_generation`)
+### 9.2 命名规范
 
-## 8. 禁忌和注意事项
+- Agent: `[业务名称]Agent` - 例如`ArticleCreationAgent`
+- 状态处理器: `[业务阶段]Handler` - 例如`RequirementClarificationHandler`
+- 交互单元:
+  - Responsor: `[业务功能]Responsor`
+  - Starter: `[业务功能]Starter`
+  - Requester: `[业务功能]Requester`
+- 状态名称: 使用snake_case - 例如`data_preparation`
 
-### 8.1 严格禁止
-- 禁止修改继承类(BaseAgent/SubThreadAgent)的核心方法签名
-- 禁止直接传递子线程作为函数参数(必须用路径)
-- 禁止同一状态处理器在不同子线程间共享实例
-- 禁止在不同层次的Agent之间共享StateHandler类
+## 10. 关键实现细节
 
-### 8.2 必须遵循
-- 每个状态必须有对应的StateHandler
-- 子线程Agent必须继承SubThreadAgent
-- 必须按照"先StateHandler后InteractionUnit"的顺序初始化
-- 必须在消息添加到子线程后立即持久化
+### 10.1 Agent必须实现的接口
 
-## 9. 工具函数与复用
+```javascript
+constructor(metadata, settings) {
+  this.metadata = metadata;
+  this.settings = settings;
+}
 
-### 9.1 必须复用的工具
-- `getSubThreadByPath`: 通过路径获取子线程
-- `my_assistant_agent_util`: 公共工具库
-- BaseAgent的状态处理与应用方法
+async _initializeStateHandlers() {
+  this.stateHandlers = {
+    initial_phase: new InitialPhaseHandler({/*...*/})
+  };
+}
 
-### 9.2 优先使用的模式
-- 使用Response对象返回结果
-- 使用Task对象定义下一步任务
-- 使用两阶段处理创建子线程
-- 使用状态机控制处理流程
+async executeTask(task, thread) {
+  return this._handleMessageProcessing(task, thread);
+}
+```
 
-## 10. 关键接口签名（不可修改）
+## 11. 最佳实践
+
+### 11.1 严格禁止
+
+- 修改继承类(BaseAgent/SubThreadAgent)的核心方法签名
+- 直接传递子线程作为函数参数(必须用路径)
+- 在不同层次的Agent之间共享StateHandler类
+- Starter持有非Responsor类型的组件
+- Requester持有非StateHandler类型的组件
+- 同一状态处理器在不同子线程间共享实例
+
+### 11.2 必须遵循
+
+- 继承正确的基类: 主线程Agent继承BaseAgent，子线程Agent继承SubThreadAgent
+- 复用基类功能: 优先使用基类中已实现的功能，如`_applyPhaseUpdateSuggestion`
+- 保持职责分离: StateHandler生成内容，InteractionUnit管理交互流程
+- 正确的持有关系: 严格遵守Responsor、Starter和Requester的持有规则
+- 持久化及时性: 关键操作后立即持久化，保证数据完整性
+- 统一线程传递: 始终传递主线程，通过路径访问子线程
+
+### 11.3 关键接口签名（不可修改）
 
 ```javascript
 // 这些方法签名不得修改
@@ -269,5 +371,3 @@ async generateUserMessage(botMessage, task, thread, agent) {...}
 _suggestPhaseUpdate(task, thread) {...}
 _applyPhaseUpdateSuggestion(task, thread) {...}
 ```
-
-通过遵循这份规范，开发者可以确保自己的Agent实现与现有代码保持一致，同时理解系统设计背后的原则和约定。

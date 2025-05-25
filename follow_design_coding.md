@@ -26,16 +26,4 @@ render: false
 
 ## 任务
 
-我希望 编写一个Agent，可以先澄清需求，然后在第二个消息里开一个thread进行生成文章的功能。
-它处理的thread的数据结构下，请从数据结构中理解业务逻辑：
-
-`````js
-{{#partial }}
-```yaml
-path: spike/1.js
-render: false
-```
-{{/partial }}
-`````
-
-不需要管提示词文件，专注于代码
+我希望 让Starter只能持有Responsor，再引入一个Requester，Requester就是原来持有StateHandler的Starter，这样可以更专一一些。
