@@ -281,10 +281,15 @@ class MySubThreadAgent extends SubThreadAgent {
 ```javascript
 // 正确方式 - 使用AIAdapter
 const AIAdapter = require('../my_assistant_agent_util/AIAdapter');
-const stream = await AIAdapter.chat(thread.messages, {
-  systemMessage: "你是一个助手",
-  stream: true
+// 使用适配器同步调用AI
+const response = await AIAdapter.chat(messages, { // 必须使用thread.messages格式的数据
+  systemMessage: "系统提示",
+  stream: false // 在SubThread里都是同步调用
 });
+
+const responseText  = response.choices[0].message.content;
+// 创建响应对象
+const response = new Response(responseText);
 
 // 错误方式 - 直接调用LLM API
 const response = await openai.chat.completions.create({/*...*/});

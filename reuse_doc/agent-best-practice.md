@@ -107,6 +107,17 @@ const response = new Response('');
 response.setStream(agent.createStream(stream));
 
 return response;
+
+//....
+// 使用适配器同步调用AI
+const response = await AIAdapter.chat(messages, { // 必须使用thread.messages格式的数据
+    systemMessage: "系统提示",
+    stream: false // 在SubThread里都是同步调用
+});
+
+const responseText  = response.choices[0].message.content;
+// 创建响应对象
+const response = new Response(responseText);
 ```
 
 

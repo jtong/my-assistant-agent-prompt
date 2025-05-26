@@ -33,4 +33,4 @@ render: false
 
 ## 任务
 
-我希望 根据规范 ```## 7. 子线程交互模型``` 的内容，查看规范的其他部分，把InteractionUnit相关的部分也做修正。
+我希望 把Responsor改为Feedbacker，把InteractionUnit持有的StateHandler改为 MessageGenerator，而且这种MessageGenerator不再是StateHandler的子类也不再拥有phase和nextPgase
