@@ -1,5 +1,5 @@
 
-{{#partial }}
+_****{{#partial }}
 ```yaml
 path: .ai_helper/dev/context/working_prompt/reuse_doc/value_and_prefer.md
 render: false
@@ -14,6 +14,17 @@ render: false
 {{#partial }}
 ```yaml
 path: .ai_helper/dev/context/working_prompt/reuse_doc/agent-best-practice.md
+render: false
+```
+{{/partial }}
+`````
+
+## 旧版规范brief
+
+`````
+{{#partial }}
+```yaml
+path: .ai_helper/dev/context/working_prompt/reuse_doc/agent-best-practice-brief.md
 render: false
 ```
 {{/partial }}
@@ -37,3 +48,5 @@ render: false
 - 在实现细节逻辑或进行修改的时候改掉不该改的接口参数、生命周期的关键代码和继承或持有关系。
 - 没有复用应该复用的函数，不管是工具类的函数还是父类的函数。
 - 没有把正确的代码放在正确的类里，破坏了类的职责定义。
+
+注意：要基于旧版来修改，旧版不冲突的内容要保留，冲突的内容以规范的为主来更新规范的brief

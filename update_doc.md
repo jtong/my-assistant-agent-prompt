@@ -33,4 +33,4 @@ render: false
 
 ## 任务
 
-我希望 把Responsor改为Feedbacker，把InteractionUnit持有的StateHandler改为 MessageGenerator，而且这种MessageGenerator不再是StateHandler的子类也不再拥有phase和nextPgase
+我希望 按照现在的代码更新规范文档：把Responsor改为Feedbacker，把InteractionUnit持有的StateHandler改为 MessageGenerator，而且这种MessageGenerator不再是StateHandler的子类也不再拥有phase和nextPhase，也不负责suggest改变状态，于是StateHandler变成主Thread的Agent专属的概念
