@@ -48,10 +48,10 @@ input:
   instruction: |
     {{#partial }}
     ```yaml
-    path: .ai_helper/dev/context/working_prompt/update_doc.md
+    # path: .ai_helper/dev/context/working_prompt/update_doc.md
     # path: .ai_helper/dev/context/working_prompt/refactoring.md
     # path: .ai_helper/dev/context/working_prompt/follow_design_coding.md
-    # path: .ai_helper/dev/context/working_prompt/follow_design_detail_coding.md
+    path: .ai_helper/dev/context/working_prompt/follow_design_detail_coding.md
     render: true
     ```
     {{/partial }}

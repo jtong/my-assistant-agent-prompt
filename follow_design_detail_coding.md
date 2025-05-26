@@ -32,4 +32,5 @@ render: false
 
 ## 任务
 
-我希望 ContentWritingAgent.js执行的时候会逐个执行writing_task 任务，但是现在执行了两个就结束了，这个不是我想要的。修正这个bug，如果需要修改设计的话也可以告诉我。
+我希望 ContentWritingAgent.js执行的时候，
+第一个Starter里就选出第一个任务来执行，然后更新任务的状态，避免第一个任务执行两遍
