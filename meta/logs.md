@@ -16,6 +16,7 @@
 - 改了设计，把InteractionUnit分成Starter和Responser，一个先发消息，一个后发消息，而且Starter可能直接就包着一个Responser
 - 把把InteractionUnit分成Starter和Responser后，改文档的时间超出了我的预期，这说明我们需要一个修改文档的文档
 - 在执行任务的时候发现StateHandler的设计很鸡肋，但是如果建立一个更底层的概念，描述起来更复杂。所以我们就让主thread agent支持StateHandler，而子thread agent不再有这个概念，把它改成了MessageGenerator，实际上我们会发现比起搞一个贯通的底层复用概念，不如只是提供一种可以解释结构的概念来拆分上下文就可以了。进入到一个领域不需要复用其他领域的概念，不然会造成解释的成本，每当增加一层区分，你就需要解释，就增加了信息熵。而对于AI来说，每次接受一个新概念，并不难，人脑是喜欢服用一些概念，降低难度，但实际上对AI来说，这没必要。
+- 解决了task的执行问题后，长度达到了11页
 
 TODO：
 - 然后拿着生成的数据，说哪一条要加入RAG
@@ -23,6 +24,7 @@ TODO：
 - chat history构造逻辑加入规范
 - [x] 测试加入规范
 - [x] 考虑把InteractionUnit分成Starter和Responser，一个先发消息，一个后发消息，而且Starter可能直接就包着一个Responser
+- 支持自动apply的文件格式，在提示词里给出格式
 
 experience:
 

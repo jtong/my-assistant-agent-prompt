@@ -1,0 +1,36 @@
+project:
+  base_path: ./.ai_helper/dev/context/working_prompt/script
+  filters:
+    # - filter_in:
+    #   - AppleScriptExecutor.js
+    #   - applescript开发相关小知识.md
+    #   - write_script.yml
+    #   - package.json
+    - ignore:
+      - "*.yml"
+      - "*.yaml"
+      - node_modules
+      - package-lock.json
+
+    #   - ".ai_helper/agent/chat/workflow_test_agent/spike"
+    #   # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
+    #   # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation_task_gen.js"
+    #   - ".ai_helper/agent/chat/workflow_test_agent/test/!(test_article_creation_content_write.js)"
+    #   # - ".ai_helper/dev/doc/chat/!(reference|usecase)/**"
+input:
+  git_clone_to_path: .ai_helper/prompt_builder/git_repo
+  instruction: |
+
+    ## 任务
+
+    我希望 创建一个js，可以执行copy-file-path.applescript 来获得webstorm当前打开的文件的绝对路径，然后根据.env中配置的 PROJECT_WORKFLOW_TEST_VSCODE_OPENED_PATH 路径计算出对于项目路径的相对路径
+    然后基于这个相对路径存入一个变量，比如instruction_file。
+    然后根据CODING_TEMPLATE 加载模板，然后把里面的${比如instruction_file} 替换为instruction_file变量的值，然后存到剪切板里的。
+    然后基于 run_workflow_test.applescript 写一个打开applescript，只是不用打开对应的文件，直接执行CMD+Shift+P，然后输入"Generate from clipboard",然后回车就行了
+  skip_clone_if_folder_exist: true  
+output:
+  prompt:
+    path: .ai_helper/prompt_builder/output/working
+    backup_path: .ai_helper/prompt_builder/output/backup
+
+   

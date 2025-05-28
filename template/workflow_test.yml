@@ -1,0 +1,59 @@
+project:
+  base_path: ./
+  filters:
+    - filter_in:
+        # my_assistant_agent_util
+        - ".ai_helper/agent/chat/my_assistant_agent_util/index.js"
+        - ".ai_helper/agent/chat/my_assistant_agent_util/AIAdapter.js"
+
+        - ".ai_helper/agent/chat/workflow_test_agent/**"  #chat agent folder
+        # - ".ai_helper/dev/doc/chat/*.md"
+        - ".ai_helper/dev/doc/chat/reference/**"
+        - ".ai_helper/dev/doc/chat/for_ai/**"
+        # - ".ai_helper/dev/markdown-preview-doc/**"
+        - ".ai_helper/dev/host_code/chat/hostUtils.js"
+        - ".ai_helper/dev/host_code/chat/chatThreadRepository.js"
+      # - ".ai_helper/dev/my_assistant_agent_examples/**"
+    - ignore:
+        # - ".ai_helper/dev/host_code/chat/webview/lib"
+        - .ai_helper/agent/chat/workflow_test_agent/node_modules/@(.*)
+        - ".ai_helper/agent/chat/workflow_test_agent/node_modules/!(ai-agent-response)"
+        # - ".ai_helper/agent/chat/workflow_test_agent/node_modules/!(ai-agent-response|@jtong)"
+        # - ".ai_helper/agent/chat/workflow_test_agent/node_modules/!(@jtong/knowledge_query)"
+        # - ".ai_helper/agent/chat/workflow_test_agent/node_modules/@jtong/knowledge_query/test"
+        # - ".ai_helper/agent/chat/workflow_test_agent/node_modules/@jtong/knowledge_query/doc"
+        - config.yml
+        - "**/*.png"
+        - "**/.DS_Store"
+        - ".ai_helper/**/debug-agent.log"
+        - ".ai_helper/**/.DS_Store"
+        - ".ai_helper/**/LICENSE.txt"
+        - "**/LICENSE.txt"
+        - ".ai_helper/**/package-lock.json"
+        - "**/package-lock.json"
+        - "**/test"
+        - "*.yml"
+        - "**/*.log"
+        - "*.log"
+        - README.md
+    - ignore:
+        - ".ai_helper/agent/chat/workflow_test_agent/test/output"
+        - ".ai_helper/agent/chat/workflow_test_agent/spike"
+        # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
+        # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation_task_gen.js"
+        - ".ai_helper/agent/chat/workflow_test_agent/test/!(test_article_creation_content_write.js)"
+      # - ".ai_helper/dev/doc/chat/!(reference|usecase)/**"
+input:
+  git_clone_to_path: .ai_helper/prompt_builder/git_repo
+  instruction: |
+    {{#partial }}
+    ```yaml
+    path: ${instruction_file}
+    render: true
+    ```
+    {{/partial }}
+  skip_clone_if_folder_exist: true
+output:
+  prompt:
+    path: .ai_helper/prompt_builder/output/working
+    backup_path: .ai_helper/prompt_builder/output/backup
