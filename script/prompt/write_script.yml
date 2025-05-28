@@ -1,0 +1,35 @@
+project:
+  base_path: ./.ai_helper/dev/context/working_prompt/script
+  filters:
+    # - filter_in:
+    #   - AppleScriptExecutor.js
+    #   - applescript开发相关小知识.md
+    #   - write_script.yml
+    #   - package.json
+    - ignore:
+      - "*.yml"
+      - "*.yaml"
+      - node_modules
+      - package-lock.json
+#      - prompt
+      - debug
+
+    #   - ".ai_helper/agent/chat/workflow_test_agent/spike"
+    #   # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
+    #   # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation_task_gen.js"
+    #   - ".ai_helper/agent/chat/workflow_test_agent/test/!(test_article_creation_content_write.js)"
+    #   # - ".ai_helper/dev/doc/chat/!(reference|usecase)/**"
+input:
+  git_clone_to_path: .ai_helper/prompt_builder/git_repo
+  instruction: |
+
+    ## 任务
+
+    我希望 AIGenFileParser.js 里面解析的时候不需要跟 <ai_gen:data> 耦合，只需要解析file标签就可以了
+  skip_clone_if_folder_exist: true  
+output:
+  prompt:
+    path: .ai_helper/prompt_builder/output/working
+    backup_path: .ai_helper/prompt_builder/output/backup
+
+   
