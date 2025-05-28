@@ -5,7 +5,7 @@ end tell
 
 tell application "WebStorm"
   activate
-  delay 0.3
+  delay 0.5
 end tell
 
 tell application "System Events"

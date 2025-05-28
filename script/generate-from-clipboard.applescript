@@ -10,8 +10,8 @@ tell application "System Events"
   keystroke return
   delay 1
 
-  -- 等待 VS Code 打开并激活
-  delay 2
+  -- 等待 VS Code 打开并激活(没必要，这个是为了没打开的)
+  -- delay 2
 
   -- 执行 CMD+Shift+P 打开命令面板
   keystroke "p" using {command down, shift down}

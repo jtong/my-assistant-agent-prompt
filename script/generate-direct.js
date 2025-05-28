@@ -26,19 +26,6 @@ function getCurrentFilePath() {
 }
 
 /**
- * 计算相对路径
- */
-function getRelativePath(absolutePath, projectPath) {
-    console.log('🔄 计算相对路径...');
-    console.log('项目根路径:', projectPath);
-    console.log('文件绝对路径:', absolutePath);
-
-    const relativePath = path.relative(projectPath, absolutePath);
-    console.log('✅ 相对路径:', relativePath);
-    return relativePath;
-}
-
-/**
  * 加载并处理模板
  */
 function processTemplate(templatePath, variables) {
@@ -68,9 +55,14 @@ function copyToClipboard(content) {
     console.log('📋 复制到剪贴板...');
     execSync('pbcopy', {
         input: content,
-        encoding: 'utf8'
+        encoding: 'utf8',
+        env: {
+            ...process.env,
+            LC_ALL: 'en_US.UTF-8',
+            LANG: 'en_US.UTF-8'
+        }
     });
-    console.log('✅ 内容已复制到剪贴板');
+    console.log('✅ 内容已复制到剪贴板?'+content);
 }
 
 /**
@@ -100,19 +92,15 @@ function main() {
         // 1. 获取当前文件路径
         const absolutePath = getCurrentFilePath();
 
-        // 2. 计算相对路径
-        const relativePath = getRelativePath(absolutePath, projectPath);
-
         // 3. 处理模板
-        const processedTemplate = processTemplate(templatePath, {
-            instruction_file: relativePath
+        const processedTemplate = processTemplate(absolutePath, {
         });
 
         // 4. 复制到剪贴板
-        checkAndDisableInputMethod();
         copyToClipboard(processedTemplate);
 
         // 5. 执行 VS Code 命令
+        checkAndDisableInputMethod();
         executeVSCodeCommand();
 
         console.log('\n🎉 模板生成流程完成！');

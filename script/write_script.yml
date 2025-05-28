@@ -11,6 +11,8 @@ project:
       - "*.yaml"
       - node_modules
       - package-lock.json
+#      - prompt
+      - debug
 
     #   - ".ai_helper/agent/chat/workflow_test_agent/spike"
     #   # - ".ai_helper/agent/chat/workflow_test_agent/test/test_article_creation.js"
@@ -23,10 +25,7 @@ input:
 
     ## 任务
 
-    我希望 创建一个js，可以执行copy-file-path.applescript 来获得webstorm当前打开的文件的绝对路径，然后根据.env中配置的 PROJECT_WORKFLOW_TEST_VSCODE_OPENED_PATH 路径计算出对于项目路径的相对路径
-    然后基于这个相对路径存入一个变量，比如instruction_file。
-    然后根据CODING_TEMPLATE 加载模板，然后把里面的${比如instruction_file} 替换为instruction_file变量的值，然后存到剪切板里的。
-    然后基于 run_workflow_test.applescript 写一个打开applescript，只是不用打开对应的文件，直接执行CMD+Shift+P，然后输入"Generate from clipboard",然后回车就行了
+    我希望 generate-direct.js 在执行applescript前，先判断一下输入法是不是开着，如果开着的话，关掉它。
   skip_clone_if_folder_exist: true  
 output:
   prompt:
