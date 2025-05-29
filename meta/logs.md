@@ -24,7 +24,15 @@ TODO：
 - chat history构造逻辑加入规范
 - [x] 测试加入规范
 - [x] 考虑把InteractionUnit分成Starter和Responser，一个先发消息，一个后发消息，而且Starter可能直接就包着一个Responser
-- 支持自动apply的文件格式，在提示词里给出格式
+- [x] 支持自动apply的文件格式，在提示词里给出格式
+- [x] 支持用raycast，从当前markdown，合并对应的xml来生成
+- [x] 让 my_assistant 插件 支持命令自动apply文件，要从剪切板读取
+- [ ] 自动加载文件格式的提示词
+- 单写作任务支持RAG
+- 支持执行中修改plan
+- 支持写作本身作为一个子thread
+- 支持写作本身的执行仿照cline
+
 
 experience:
 

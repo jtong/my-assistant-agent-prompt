@@ -6,14 +6,14 @@ async function example() {
     const parser = new AIGenFileParser(projectPath);
 
     const inputString = `
-<ai_gen:file path="src/components/Hello.js">
+<ai_gen:file path="test/src/components/Hello.js">
 function Hello() {
   return <div>Hello World!</div>;
 }
 
 export default Hello;
 </ai_gen:file>
-<ai_gen:file path="package.json">
+<ai_gen:file path="test/package.json">
 {
   "name": "my-app",
   "version": "1.0.0"
