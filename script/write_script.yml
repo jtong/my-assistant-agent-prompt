@@ -11,7 +11,7 @@ project:
       - "*.yaml"
       - node_modules
       - package-lock.json
-#      - prompt
+      - prompt
       - debug
 
     #   - ".ai_helper/agent/chat/workflow_test_agent/spike"
@@ -25,7 +25,8 @@ input:
 
     ## 任务
 
-    我希望 generate-direct.js 在执行applescript前，先判断一下输入法是不是开着，如果开着的话，关掉它。
+    我希望 添加一个script command可以读取 “/Users/jtong/develop/education/homework-lab/java_microservice/prompt-builder-projects/chatbot_family/doc/my_assistant_test_project/.ai_helper/dev/context/working_prompt/script/prompt/output_file_xml.md” 的内容到剪切板
+
   skip_clone_if_folder_exist: true  
 output:
   prompt:
